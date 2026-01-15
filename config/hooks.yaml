@@ -1,0 +1,72 @@
+hooks:
+  # Wildcard hook - logs all events
+  "*":
+    - path: "orchestrator.hooks.builtin.logging:LoggingHook"
+      enabled: true
+      priority: 10
+      config:
+        log_file: ".orchestrator/hooks.log"
+        log_format: "text"  # "text" or "json"
+        include_metadata: false
+
+  # Orchestrator lifecycle events
+  orchestrator.start:
+    - path: "orchestrator.hooks.builtin.logging:StartupLoggingHook"
+      enabled: true
+      priority: 10
+      config: {}
+
+  # LLM call hooks
+  llm.before_call:
+    - path: "orchestrator.hooks.builtin.logging:LLMCallLoggingHook"
+      enabled: true
+      priority: 100
+      config:
+        log_prompts: false  # Set to true for debugging
+        log_tokens: true
+
+  llm.after_call:
+    - path: "orchestrator.hooks.builtin.logging:LLMCallLoggingHook"
+      enabled: true
+      priority: 100
+      config:
+        log_prompts: false
+        log_tokens: true
+
+  # Tool execution hooks
+  tool.requires_approval:
+    - path: "orchestrator.hooks.builtin.hitl:HITLHook"
+      enabled: true
+      priority: 50
+      config:
+        timeout: 300  # 5 minutes
+        auto_approve_safe_tools: true
+        prompt_format: "standard"  # "standard" or "detailed"
+
+  # Task lifecycle hooks for metrics
+  task.completed:
+    - path: "orchestrator.hooks.builtin.metrics:MetricsHook"
+      enabled: true
+      priority: 100
+      config:
+        output_file: ".orchestrator/metrics.json"
+        collect_task_metrics: true
+        collect_tool_metrics: true
+
+  task.failed:
+    - path: "orchestrator.hooks.builtin.metrics:MetricsHook"
+      enabled: true
+      priority: 100
+      config:
+        output_file: ".orchestrator/metrics.json"
+        collect_task_metrics: true
+        collect_tool_metrics: true
+
+  tool.after_execute:
+    - path: "orchestrator.hooks.builtin.metrics:MetricsHook"
+      enabled: true
+      priority: 100
+      config:
+        output_file: ".orchestrator/metrics.json"
+        collect_task_metrics: true
+        collect_tool_metrics: true
