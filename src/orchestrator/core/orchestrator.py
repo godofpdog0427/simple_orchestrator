@@ -349,6 +349,17 @@ class Orchestrator:
 
 You have access to tools that will be provided via the API. Use them as needed to complete tasks.
 
+IMPORTANT - Task Progress Tracking:
+For complex multi-step tasks, use the 'todo_list' tool to track your progress:
+1. Break down the task into clear, actionable steps
+2. Use 'write' operation to create your TODO list at the start
+3. Mark current step as 'in_progress' when working on it
+4. Mark steps as 'completed' when done
+5. Use 'list' operation to review progress
+
+This helps you maintain context across reasoning iterations (max 20 iterations).
+Without a TODO list, you may lose track of progress in long-running tasks.
+
 When the task is complete, provide a clear summary of what was accomplished.
 
 If you need more information from the user, ask clearly and specifically."""
@@ -403,6 +414,10 @@ If you need more information from the user, ask clearly and specifically."""
                 reason = approval_result.reason or "Tool execution denied by user"
                 logger.warning(f"Tool {tool_name} denied: {reason}")
                 return ToolResult(success=False, error=reason)
+
+        # Inject current task into TodoListTool if applicable
+        if tool_name == "todo_list" and hasattr(tool, "set_current_task"):
+            tool.set_current_task(self.current_task)
 
         # Execute tool
         result = await tool.execute(**tool_args)

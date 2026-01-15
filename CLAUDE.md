@@ -2,6 +2,9 @@
 
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Last Updated**: 2026-01-16
+**Current Phase**: Phase 2.5 (TodoList Tool - In Progress)
+
 ---
 
 ## ⚠️ CRITICAL: Git Branch Strategy
@@ -1065,6 +1068,52 @@ class TaskValidationError(FatalError):
 - `config/hooks.yaml` - Complete hook configuration
 
 **Completion**: ~95% (user_extensions auto-discovery deferred to Phase 4)
+
+### Phase 2.5: TodoList Tool (Hotfix) 🚧 IN PROGRESS
+
+**Reason for Insertion**: Critical capability gap discovered - Agent cannot track progress across long reasoning loops (max 20 iterations).
+
+**Problem**: In complex multi-step tasks, the Agent may lose track of what has been completed after 10+ iterations, leading to incomplete or repeated work.
+
+**Solution**: Implement TodoList tool (inspired by Claude Code's TodoWrite) to enable structured task progress tracking.
+
+**Checklist**:
+- ✅ Extend Task model with `todo_list` field and `TodoItem` model
+- ✅ Implement TodoListTool with operations: write, add, update, list, clear
+- ✅ Register tool in ToolRegistry
+- ✅ Update system prompt with usage instructions
+- ✅ Enable in configuration (config/default.yaml)
+- ⏳ Testing with complex multi-step tasks
+
+**Implemented Files**:
+- `src/orchestrator/tasks/models.py` - Added TodoItem model and Task.todo_list field
+- `src/orchestrator/tools/builtin/todo.py` - TodoListTool implementation
+- `src/orchestrator/tools/registry.py` - Registered TodoListTool
+- `src/orchestrator/core/orchestrator.py` - Updated system prompt, task injection
+- `config/default.yaml` - Enabled todo_list tool
+
+**Usage Example**:
+```python
+# Agent can now use todo_list tool
+{
+  "operation": "write",
+  "todos": [
+    {"content": "Read database schema", "status": "pending", "active_form": "Reading database schema"},
+    {"content": "Design new table", "status": "pending", "active_form": "Designing new table"},
+    {"content": "Write migration", "status": "pending", "active_form": "Writing migration"}
+  ]
+}
+
+# Update progress
+{"operation": "update", "index": 0, "status": "completed"}
+{"operation": "update", "index": 1, "status": "in_progress"}
+```
+
+**Impact**: Enables Agent to handle complex tasks without losing context. Critical for production use.
+
+**Priority**: HIGH - Blocks effective execution of complex tasks
+
+**Completion**: ~90% (implementation done, testing pending)
 
 ### Phase 3: Task Hierarchy & Dependencies ⏳ NOT STARTED
 

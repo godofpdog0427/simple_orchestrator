@@ -45,7 +45,11 @@ tools:
   file_delete:
     enabled: true
     requires_approval: true
-  
+
+  todo_list:
+    enabled: true
+    requires_approval: false
+
   directories:
     - "./user_extensions/tools"
 

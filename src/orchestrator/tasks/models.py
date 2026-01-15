@@ -8,6 +8,14 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 
+class TodoItem(BaseModel):
+    """Single TODO item for task progress tracking."""
+
+    content: str  # Task description, e.g., "Update database schema"
+    status: str  # "pending" | "in_progress" | "completed"
+    active_form: str  # Active description, e.g., "Updating database schema"
+
+
 class TaskStatus(str, Enum):
     """Task execution status."""
 
@@ -57,6 +65,9 @@ class Task(BaseModel):
     # Results
     result: Optional[Any] = None
     error: Optional[str] = None
+
+    # Progress tracking (Phase 2.5)
+    todo_list: list[TodoItem] = Field(default_factory=list)
 
     class Config:
         """Pydantic config."""

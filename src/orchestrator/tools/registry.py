@@ -40,6 +40,7 @@ class ToolRegistry:
         """Register built-in tools."""
         from orchestrator.tools.builtin.bash import BashTool
         from orchestrator.tools.builtin.file_ops import FileReadTool, FileWriteTool, FileDeleteTool
+        from orchestrator.tools.builtin.todo import TodoListTool
 
         # Register bash tool
         bash_config = self.config.get("bash", {})
@@ -59,6 +60,11 @@ class ToolRegistry:
         file_delete_config = self.config.get("file_delete", {})
         if file_delete_config.get("enabled", True):
             self.register(FileDeleteTool(file_delete_config))
+
+        # Register TodoList tool (Phase 2.5)
+        todo_config = self.config.get("todo_list", {})
+        if todo_config.get("enabled", True):
+            self.register(TodoListTool())
 
     async def _load_tools_from_directory(self, directory: Path) -> None:
         """
