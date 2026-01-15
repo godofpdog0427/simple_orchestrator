@@ -1032,31 +1032,39 @@ class TaskValidationError(FatalError):
 - HITL approvals
 - Memory/caching
 
-### Phase 2: Hook System & HITL ⏳ NOT STARTED
+### Phase 2: Hook System & HITL ✅ COMPLETED
 
 **Goal**: Add extensibility through hooks and human oversight.
 
 **Checklist**:
-- [ ] Hook engine implementation
-  - [ ] Event triggering at lifecycle points
-  - [ ] Priority-based execution
-  - [ ] Context propagation
-  - [ ] Result handling (continue/block/modify)
-- [ ] Built-in hooks
-  - [ ] LoggingHook (all events)
-  - [ ] HITLHook (approval prompts)
-  - [ ] MetricsHook (statistics collection)
-- [ ] HITL workflow
-  - [ ] Interactive approval prompts
-  - [ ] Approval rules configuration
-  - [ ] Auto-approval for safe operations
-  - [ ] Timeout handling
-- [ ] Hook configuration loading
-  - [ ] Parse `config/hooks.yaml`
-  - [ ] Register custom hooks from user_extensions
-  - [ ] Enable/disable hooks dynamically
+- ✅ Hook engine implementation
+  - ✅ Event triggering at lifecycle points
+  - ✅ Priority-based execution
+  - ✅ Context propagation
+  - ✅ Result handling (continue/block/modify)
+- ✅ Built-in hooks
+  - ✅ LoggingHook (all events)
+  - ✅ HITLHook (approval prompts)
+  - ✅ MetricsHook (statistics collection)
+- ✅ HITL workflow
+  - ✅ Interactive approval prompts
+  - ✅ Approval rules configuration
+  - ✅ Auto-approval for safe operations
+  - ✅ Timeout handling
+- ✅ Hook configuration loading
+  - ✅ Parse `config/hooks.yaml`
+  - ⚠️ Register custom hooks from user_extensions (framework ready, not implemented)
+  - ✅ Enable/disable hooks dynamically
 
-**Estimated Effort**: 2-3 days
+**Implemented Files**:
+- `src/orchestrator/hooks/engine.py` - Hook engine with event orchestration
+- `src/orchestrator/hooks/builtin/logging.py` - LoggingHook, StartupLoggingHook, LLMCallLoggingHook
+- `src/orchestrator/hooks/builtin/hitl.py` - HITLHook with interactive approval prompts
+- `src/orchestrator/hooks/builtin/metrics.py` - MetricsHook for statistics collection
+- `src/orchestrator/core/orchestrator.py` - Integrated hook triggers at all lifecycle events
+- `config/hooks.yaml` - Complete hook configuration
+
+**Completion**: ~95% (user_extensions auto-discovery deferred to Phase 4)
 
 ### Phase 3: Task Hierarchy & Dependencies ⏳ NOT STARTED
 
