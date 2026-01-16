@@ -14,6 +14,13 @@ from orchestrator.tasks.models import TodoItem
 logger = logging.getLogger(__name__)
 
 
+# Import LiveDisplayManager for new functionality
+try:
+    from orchestrator.display_live import LiveDisplayManager
+except ImportError:
+    LiveDisplayManager = None
+
+
 class DisplayManager:
     """
     Manages rich CLI display for orchestrator execution.

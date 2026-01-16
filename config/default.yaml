@@ -111,7 +111,7 @@ persistence:
 logging:
   level: "INFO"
   file: "./.orchestrator/logs/orchestrator.log"
-  console: true
+  console: false  # Disabled for clean Live display
   log_llm_calls: true
   log_tool_calls: true
   max_bytes: 10485760
