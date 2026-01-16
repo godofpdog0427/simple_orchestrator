@@ -3,7 +3,7 @@
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Last Updated**: 2026-01-16
-**Current Phase**: Phase 4A (Skill Registry - Completed)
+**Current Phase**: Phase 4 (Skill Registry & Subagents - Completed)
 
 ---
 
@@ -1545,28 +1545,115 @@ Orchestrator:
 
 **Completion**: 100%
 
-### Phase 4B: Subagent System ⏳ NOT STARTED
+### Phase 4B: Subagent System ✅ COMPLETED
 
 **Goal**: Enable task delegation to isolated child agents with resource constraints.
 
 **Checklist**:
-- [ ] Subagent manager
-  - [ ] Spawn isolated child agents
-  - [ ] Resource constraints (tokens, time, tools)
-  - [ ] Context isolation
-  - [ ] Result collection
-- [ ] Subagent lifecycle
-  - [ ] Concurrent subagent limits
-  - [ ] Graceful shutdown
-  - [ ] Error propagation to parent
+- ✅ Subagent manager
+  - ✅ Spawn isolated child agents
+  - ✅ Resource constraints (tokens, time, tools)
+  - ✅ Context isolation
+  - ✅ Result collection
+- ✅ Subagent lifecycle
+  - ✅ Concurrent subagent limits
+  - ✅ Graceful shutdown
+  - ✅ Error propagation to parent
+- ✅ Hook events (subagent.spawned, subagent.completed, subagent.failed)
+- ✅ SubagentSpawnTool for Agent to use
+- ✅ Configuration in config/default.yaml
 
-**Note**: Phase 4 was split into 4A (Skill Registry) and 4B (Subagents) for easier implementation. Phase 4A is now complete.
+**Implemented Files**:
+- `src/orchestrator/subagents/models.py` - Subagent data models
+  - `SubagentConstraints` - Resource constraints for subagent execution
+  - `SubagentHandle` - Handle for managing spawned subagents
+  - `SubagentContext` - Context passed to subagent
+- `src/orchestrator/subagents/manager.py` - SubagentManager implementation
+  - `spawn()` - Spawn isolated child agents
+  - `wait_for()` - Wait for subagent completion
+  - `get_active_count()` - Query active subagent count
+  - `list_active()` - List all active subagents
+  - Concurrency control with semaphore
+  - Hook event triggers (spawned, completed, failed)
+- `src/orchestrator/tools/builtin/subagent_spawn.py` - SubagentSpawnTool
+  - Operations: spawn, wait, list_active, get_status
+  - Agent interface to subagent system
+- `src/orchestrator/core/orchestrator.py` - Integration
+  - Initialize SubagentManager with hook_engine
+  - Register SubagentSpawnTool
+  - Shutdown subagent manager
+  - Factory method for creating subagent orchestrators
+- `config/default.yaml` - Subagent configuration
 
-**Estimated Effort**: 2-3 days
+**Key Features**:
 
-### Phase 4 (Original): Subagents & Skill Registry ⏳ PARTIALLY COMPLETED
+1. **Resource Constraints**:
+   - `max_tokens`: Token budget limit (default: 50000)
+   - `timeout_seconds`: Execution timeout (default: 300s)
+   - `max_iterations`: Reasoning loop limit (default: 15)
+   - `allowed_tools`: Tool access restriction (default: bash, file_read, file_write)
+   - `skill`: Optional skill to load
 
-**Status**: Phase 4A (Skill Registry) completed. Phase 4B (Subagents) not started.
+2. **Context Isolation**:
+   - Subagents only receive subtask info + parent context
+   - Separate configuration with constraints applied
+   - Independent tool registry with restricted tools
+   - No access to parent conversation history
+
+3. **Concurrency Control**:
+   - Semaphore-based concurrency limiting (max_concurrent: 3)
+   - Async execution with proper cleanup
+   - Graceful shutdown cancels all active subagents
+
+4. **Error Handling**:
+   - Timeout handling with asyncio.wait_for()
+   - Exception propagation to parent
+   - Status tracking (PENDING, RUNNING, COMPLETED, FAILED, TIMEOUT, CANCELLED)
+   - Hook events for monitoring
+
+5. **Tool Interface**:
+   - `spawn` - Create new subagent with constraints
+   - `wait` - Wait for subagent completion
+   - `list_active` - List active subagents
+   - `get_status` - Query subagent status
+
+**Usage Example**:
+```python
+# Agent uses subagent_spawn tool
+{
+  "operation": "spawn",
+  "subtask_id": "task_123",
+  "max_tokens": 30000,
+  "timeout_seconds": 180,
+  "allowed_tools": ["bash", "file_read"],
+  "skill": "research",
+  "context": {"domain": "database migration"}
+}
+
+# Wait for completion
+{
+  "operation": "wait",
+  "subtask_id": "task_123",
+  "wait_timeout": 200
+}
+```
+
+**Benefits**:
+1. **Task Delegation**: Complex subtasks can be delegated to specialized agents
+2. **Resource Isolation**: Subagents operate within defined budgets
+3. **Parallel Execution**: Multiple subagents can run concurrently
+4. **Safety**: Tool restrictions prevent dangerous operations
+5. **Monitoring**: Hook events enable real-time tracking
+
+**Impact**: Enables hierarchical task decomposition with isolated execution contexts, improving orchestrator's ability to handle complex multi-step workflows.
+
+**Note**: Phase 4 was split into 4A (Skill Registry) and 4B (Subagents) for easier implementation. Both phases are now complete.
+
+**Completion**: 100%
+
+### Phase 4 (Original): Subagents & Skill Registry ✅ COMPLETED
+
+**Status**: Phase 4A (Skill Registry) completed. Phase 4B (Subagents) completed.
 
 **Goal**: Enable delegation and skill-based task assignment.
 
