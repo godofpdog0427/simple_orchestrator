@@ -27,6 +27,7 @@ class Orchestrator:
         self.tool_registry: Optional[Any] = None
         self.task_manager: Optional[Any] = None
         self.hook_engine: Optional[Any] = None
+        self.skill_registry: Optional[Any] = None  # Phase 4A
 
         # Setup logging
         self._setup_logging()
@@ -57,6 +58,7 @@ class Orchestrator:
 
         from orchestrator.hooks.engine import HookEngine
         from orchestrator.llm.client import LLMClient
+        from orchestrator.skills.registry import SkillRegistry
         from orchestrator.tasks.manager import TaskManager
         from orchestrator.tools.registry import ToolRegistry
 
@@ -94,6 +96,11 @@ class Orchestrator:
         # Initialize task manager
         task_config = self.config.get("tasks", {})
         self.task_manager = TaskManager(task_config)
+
+        # Initialize skill registry (Phase 4A)
+        skill_config = self.config.get("skills", {})
+        self.skill_registry = SkillRegistry(skill_config)
+        await self.skill_registry.initialize()
 
         logger.info("Orchestrator initialized successfully")
 
@@ -247,6 +254,7 @@ class Orchestrator:
         """
         context = {
             "task": task,
+            "task_description": task.description or task.title,  # Phase 4A: for skill matching
             "tools": self.tool_registry.get_tool_schemas() if self.tool_registry else [],
             "conversation_history": [],
         }
@@ -386,9 +394,18 @@ class Orchestrator:
         """
         # For Anthropic, tools are passed via API parameter, not in system prompt
         max_iterations = self.config.get("orchestrator", {}).get("max_iterations", 20)
+
+        # Build base prompt
         prompt = f"""You are an AI assistant helping with task execution.
 
-You have access to tools that will be provided via the API. Use them as needed to complete tasks.
+You have access to tools that will be provided via the API. Use them as needed to complete tasks."""
+
+        # Inject skills if available (Phase 4A)
+        skill_instructions = self._get_skill_instructions(context)
+        if skill_instructions:
+            prompt += f"\n\n{skill_instructions}"
+
+        prompt += """
 
 IMPORTANT - Task Progress Tracking:
 For complex multi-step tasks, use the 'todo_list' tool to track your progress:
@@ -627,3 +644,50 @@ If you need more information from the user, ask clearly and specifically."""
             # Recursively check grandparent
             if parent.parent_id:
                 await self._check_parent_completion(parent.parent_id)
+
+    def _get_skill_instructions(self, context: dict[str, Any]) -> str:
+        """
+        Get skill instructions to inject into system prompt (Phase 4A).
+
+        Matches skills to the current task based on:
+        - Task description keywords
+        - Available tools
+
+        Args:
+            context: Context dictionary with task info
+
+        Returns:
+            Formatted skill instructions or empty string
+        """
+        if not self.skill_registry or not self.config.get("skills", {}).get("enabled", True):
+            return ""
+
+        # Get current task description
+        task_description = context.get("task_description", "")
+        if not task_description:
+            return ""
+
+        # Get available tool names
+        available_tools = [tool.definition.name for tool in self.tool_registry.tools.values()]
+
+        # Get recommended skills
+        skills = self.skill_registry.get_skills_for_task(task_description, available_tools)
+
+        # Limit to top 3 skills to avoid prompt bloat
+        max_skills = self.config.get("skills", {}).get("max_auto_inject", 3)
+        skills = skills[:max_skills]
+
+        if not skills:
+            return ""
+
+        # Format skill instructions
+        skill_text = "# Available Skills\n\n"
+        skill_text += "The following skills are available to guide your work:\n\n"
+
+        for skill in skills:
+            skill_text += f"## {skill.metadata.name}\n"
+            skill_text += f"{skill.metadata.description}\n\n"
+            skill_text += f"{skill.content}\n\n"
+            skill_text += "---\n\n"
+
+        return skill_text
