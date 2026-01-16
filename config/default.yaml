@@ -87,6 +87,13 @@ subagents:
     max_iterations: 15  # Default max reasoning iterations
     allowed_tools: ["bash", "file_read", "file_write"]  # Default allowed tools
 
+cache:
+  enabled: true  # Enable caching system (Phase 5)
+  ttl: 3600  # Default TTL in seconds (1 hour)
+  max_entries: 1000  # Maximum number of cache entries
+  tool_results: true  # Cache tool execution results
+  llm_responses: false  # Cache LLM responses (disabled by default for safety)
+
 tasks:
   max_depth: 5  # Maximum subtask nesting depth (Phase 3)
   max_subtasks_per_task: 20  # Maximum subtasks per parent task (Phase 3)
