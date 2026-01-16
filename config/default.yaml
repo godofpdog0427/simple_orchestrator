@@ -8,7 +8,7 @@ llm:
   provider: "anthropic"
   anthropic:
     model: "claude-sonnet-4-20250514"
-    max_tokens: 4096
+    max_tokens: 8192
     temperature: 0.7
     api_key_env: "ANTHROPIC_API_KEY"
 
@@ -69,6 +69,14 @@ tools:
 
   directories:
     - "./user_extensions/tools"
+
+skills:
+  enabled: true  # Enable skill system (Phase 4A)
+  builtin_path: "src/orchestrator/skills/builtin"  # Path to built-in skills
+  user_path: "user_extensions/skills"  # Path to user-defined skills
+  auto_discover: true  # Automatically discover SKILL.md files
+  auto_inject: true  # Automatically inject matching skills into prompt
+  max_auto_inject: 3  # Maximum number of skills to auto-inject (prevent prompt bloat)
 
 tasks:
   max_depth: 5  # Maximum subtask nesting depth (Phase 3)

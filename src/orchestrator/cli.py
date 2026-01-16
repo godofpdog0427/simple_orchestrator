@@ -224,31 +224,148 @@ def tool_info(tool_name: str) -> None:
 
 
 @cli.group()
-def skill() -> None:
-    """Skill management commands."""
-    pass
+@click.pass_context
+def skill(ctx: click.Context) -> None:
+    """Skill management commands (Phase 4A)."""
+    # Load config for skill commands
+    config_path = ctx.obj.get("config")
+    ctx.obj["loaded_config"] = _load_config(config_path)
 
 
 @skill.command("list")
-def skill_list() -> None:
+@click.option("--tag", "-t", multiple=True, help="Filter by tags")
+@click.option("--tool", multiple=True, help="Filter by required tools")
+@click.pass_context
+def skill_list(ctx: click.Context, tag: tuple[str, ...], tool: tuple[str, ...]) -> None:
     """List all available skills."""
-    console.print("[yellow]Not implemented yet[/yellow]")
+    from rich.table import Table
+
+    config = ctx.obj.get("loaded_config", {})
+
+    # Initialize skill registry
+    from orchestrator.skills.registry import SkillRegistry
+
+    skill_config = config.get("skills", {})
+    registry = SkillRegistry(skill_config)
+
+    # Synchronously initialize
+    import asyncio
+    asyncio.run(registry.initialize())
+
+    # Get skills
+    if tag:
+        skills = registry.search_by_tags(list(tag))
+    elif tool:
+        skills = registry.search_by_tools(list(tool))
+    else:
+        skills = registry.list_all()
+
+    if not skills:
+        console.print("[yellow]No skills found[/yellow]")
+        return
+
+    # Display table
+    table = Table(title="📚 Available Skills", show_header=True, header_style="bold magenta")
+    table.add_column("Name", style="cyan", width=20)
+    table.add_column("Description", style="white", width=40)
+    table.add_column("Tools", style="green", width=20)
+    table.add_column("Tags", style="yellow", width=20)
+
+    for skill in skills:
+        table.add_row(
+            skill.metadata.name,
+            skill.metadata.description,
+            ", ".join(skill.metadata.tools_required[:3]),  # Limit display
+            ", ".join(skill.metadata.tags[:3])  # Limit display
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]Total: {len(skills)} skill(s)[/dim]")
 
 
 @skill.command("show")
 @click.argument("skill_name")
-def skill_show(skill_name: str) -> None:
+@click.pass_context
+def skill_show(ctx: click.Context, skill_name: str) -> None:
     """Display SKILL.md content for a skill."""
-    console.print(f"Skill: {skill_name}")
-    console.print("[yellow]Not implemented yet[/yellow]")
+    from rich.markdown import Markdown
+    from rich.panel import Panel
+
+    config = ctx.obj.get("loaded_config", {})
+
+    # Initialize skill registry
+    from orchestrator.skills.registry import SkillRegistry
+
+    skill_config = config.get("skills", {})
+    registry = SkillRegistry(skill_config)
+
+    import asyncio
+    asyncio.run(registry.initialize())
+
+    # Get skill
+    skill = registry.get(skill_name)
+
+    if not skill:
+        console.print(f"[red]Skill not found: {skill_name}[/red]")
+        return
+
+    # Display metadata
+    metadata_text = f"""**Name**: {skill.metadata.name}
+**Description**: {skill.metadata.description}
+**Version**: {skill.metadata.version}
+**Priority**: {skill.metadata.priority}
+**Tools Required**: {', '.join(skill.metadata.tools_required)}
+**Tags**: {', '.join(skill.metadata.tags)}
+**File**: {skill.file_path}"""
+
+    console.print(Panel(metadata_text, title="Skill Metadata", border_style="cyan"))
+    console.print()
+
+    # Display content
+    md = Markdown(skill.content)
+    console.print(Panel(md, title="Skill Instructions", border_style="green"))
 
 
 @skill.command("create")
 @click.argument("name")
-def skill_create(name: str) -> None:
+@click.option("--description", "-d", default="", help="Skill description")
+@click.option("--tools", "-t", multiple=True, help="Required tools")
+@click.option("--tags", multiple=True, help="Skill tags")
+@click.pass_context
+def skill_create(ctx: click.Context, name: str, description: str, tools: tuple[str, ...], tags: tuple[str, ...]) -> None:
     """Create a new skill skeleton in user_extensions/skills/."""
-    console.print(f"Creating skill: {name}")
-    console.print("[yellow]Not implemented yet[/yellow]")
+    from pathlib import Path
+    from orchestrator.skills.models import create_skill_template
+
+    config = ctx.obj.get("loaded_config", {})
+
+    # Get user skills directory
+    user_path = config.get("skills", {}).get("user_path", "user_extensions/skills")
+    skill_dir = Path(user_path) / name
+    skill_file = skill_dir / "SKILL.md"
+
+    # Check if skill already exists
+    if skill_file.exists():
+        console.print(f"[red]Skill already exists: {skill_file}[/red]")
+        return
+
+    # Create directory
+    skill_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate template
+    template = create_skill_template(
+        name=name,
+        description=description or f"Description for {name}",
+        tools_required=list(tools) if tools else [],
+        tags=list(tags) if tags else []
+    )
+
+    # Write file
+    skill_file.write_text(template, encoding="utf-8")
+
+    console.print(f"[green]✓[/green] Created skill: {skill_file}")
+    console.print(f"\nEdit the file to customize the skill instructions:")
+    console.print(f"  {skill_file}")
 
 
 @cli.group()

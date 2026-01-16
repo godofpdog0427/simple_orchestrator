@@ -3,7 +3,7 @@
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Last Updated**: 2026-01-16
-**Current Phase**: Phase 3.5 (Workspace Isolation - Completed)
+**Current Phase**: Phase 4A (Skill Registry - Completed)
 
 ---
 
@@ -1408,7 +1408,165 @@ orchestrator test
 
 **Completion**: 100%
 
-### Phase 4: Subagents & Skill Registry ⏳ NOT STARTED
+### Phase 4A: Skill Registry ✅ COMPLETED
+
+**Goal**: Implement automatic skill discovery and intelligent skill-based task guidance.
+
+**Problem**: LLM lacks domain-specific knowledge for specialized tasks (code editing, git operations, etc.). Each task requires manual prompting with best practices.
+
+**Solution**: Create a skill registry that auto-discovers SKILL.md files and injects relevant instructions into the system prompt based on task context.
+
+**Checklist**:
+- ✅ Skill models and parsing
+  - ✅ Pydantic model for Skill metadata
+  - ✅ YAML frontmatter parser
+  - ✅ Skill content extraction
+  - ✅ Validation for required fields
+- ✅ Skill registry system
+  - ✅ Auto-discovery from builtin and user directories
+  - ✅ Tag-based indexing
+  - ✅ Tool-based indexing
+  - ✅ Keyword search in name/description
+  - ✅ Smart skill matching for tasks
+- ✅ Skill injection
+  - ✅ Automatic skill matching based on task description
+  - ✅ Tool requirement matching
+  - ✅ Priority-based skill selection
+  - ✅ Inject top N skills into system prompt
+- ✅ CLI commands
+  - ✅ `orchestrator skill list` - List all skills with filtering
+  - ✅ `orchestrator skill show <name>` - Display skill content
+  - ✅ `orchestrator skill create <name>` - Create skill template
+
+**Implemented Files**:
+- `src/orchestrator/skills/models.py` - Skill data models and parsing
+  - `SkillMetadata` - Pydantic model for frontmatter
+  - `Skill` - Complete skill with metadata + content
+  - `parse_skill_file()` - Parse SKILL.md with YAML frontmatter
+  - `create_skill_template()` - Generate new skill skeleton
+- `src/orchestrator/skills/registry.py` - Skill registry and discovery
+  - `SkillRegistry` - Main registry class
+  - `discover_skills_in_directory()` - Auto-discover SKILL.md files
+  - `search_by_tags()` / `search_by_tools()` / `search_by_keywords()` - Search APIs
+  - `get_skills_for_task()` - Smart matching algorithm
+- `src/orchestrator/core/orchestrator.py` - Skill injection
+  - Initialize SkillRegistry in `initialize()`
+  - `_get_skill_instructions()` - Match and format skills
+  - Inject skills into `_build_system_prompt()`
+  - Add `task_description` to context for matching
+- `src/orchestrator/cli.py` - Skill management commands
+  - `skill list` - Table view with tag/tool filtering
+  - `skill show` - Rich display of skill metadata + content
+  - `skill create` - Interactive skill creation
+- `config/default.yaml` - Skill configuration
+
+**Skill File Format**:
+```markdown
+---
+name: code_edit
+description: "Edit existing code files with proper validation"
+tools_required: [file_read, file_write]
+tags: [coding, refactoring]
+version: "1.0.0"
+priority: medium
+---
+
+# Code Edit
+
+## Overview
+...
+```
+
+**Usage Examples**:
+
+```bash
+# List all skills
+orchestrator skill list
+
+# Filter by tag
+orchestrator skill list --tag coding
+
+# Filter by tool
+orchestrator skill list --tool file_write
+
+# Show skill details
+orchestrator skill show code_edit
+
+# Create new skill
+orchestrator skill create my_skill \
+  --description "My custom skill" \
+  --tools file_read file_write \
+  --tags automation
+```
+
+**Matching Algorithm**:
+1. Extract keywords from task description
+2. Search skills by keywords in name/description
+3. Search skills by available tools
+4. Combine and deduplicate results
+5. Sort by priority (high > medium > low)
+6. Select top N skills (default: 3)
+
+**Automatic Injection**:
+When a task is executed, the orchestrator:
+1. Analyzes task description
+2. Matches relevant skills using `get_skills_for_task()`
+3. Injects skill instructions into system prompt
+4. LLM receives domain-specific guidance automatically
+
+**Example Task Flow**:
+```
+User: "Refactor the auth.py file to improve error handling"
+
+Orchestrator:
+1. Detects keywords: "refactor", "file", "error"
+2. Matches skills: code_edit, code_review
+3. Injects both skill instructions into prompt
+4. LLM follows best practices from skills
+```
+
+**Built-in Skills** (5 available):
+1. **code_edit** - Safe code editing with validation
+2. **code_review** - Code quality assessment
+3. **research** - Web research methodology
+4. **git_operations** - Git workflow best practices
+5. **file_management** - File organization patterns
+
+**Benefits**:
+1. **Zero Manual Prompting**: Skills auto-inject based on task
+2. **Consistent Quality**: Best practices enforced automatically
+3. **Extensible**: Users can add custom skills easily
+4. **Discoverable**: CLI commands make skills visible
+5. **Prioritized**: High-priority skills preferred
+
+**Impact**: Significantly improves LLM performance on domain-specific tasks through automatic injection of expert guidance.
+
+**Priority**: HIGH - Core feature for quality task execution
+
+**Completion**: 100%
+
+### Phase 4B: Subagent System ⏳ NOT STARTED
+
+**Goal**: Enable task delegation to isolated child agents with resource constraints.
+
+**Checklist**:
+- [ ] Subagent manager
+  - [ ] Spawn isolated child agents
+  - [ ] Resource constraints (tokens, time, tools)
+  - [ ] Context isolation
+  - [ ] Result collection
+- [ ] Subagent lifecycle
+  - [ ] Concurrent subagent limits
+  - [ ] Graceful shutdown
+  - [ ] Error propagation to parent
+
+**Note**: Phase 4 was split into 4A (Skill Registry) and 4B (Subagents) for easier implementation. Phase 4A is now complete.
+
+**Estimated Effort**: 2-3 days
+
+### Phase 4 (Original): Subagents & Skill Registry ⏳ PARTIALLY COMPLETED
+
+**Status**: Phase 4A (Skill Registry) completed. Phase 4B (Subagents) not started.
 
 **Goal**: Enable delegation and skill-based task assignment.
 
