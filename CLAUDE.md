@@ -3,7 +3,7 @@
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Last Updated**: 2026-01-16
-**Current Phase**: Phase 3 (Task Hierarchy & Dependencies - Completed)
+**Current Phase**: Phase 3.5 (Workspace Isolation - Completed)
 
 ---
 
@@ -148,6 +148,9 @@ pytest --cov=orchestrator --cov-report=html
 
 # Run integration tests only
 pytest tests/integration/
+
+# Test orchestrator in isolated workspace (Phase 3.5)
+orchestrator test
 ```
 
 ---
@@ -1351,6 +1354,57 @@ tools:
 **Impact**: Enables Agent to handle complex multi-step workflows with proper sequencing and tracking.
 
 **Priority**: HIGH - Core feature for production use
+
+**Completion**: 100%
+
+### Phase 3.5: Workspace Isolation ✅ COMPLETED
+
+**Goal**: Prevent Agent file operations from polluting the project directory during testing and development.
+
+**Problem**: When running `orchestrator chat` in the project root, Agent file operations (write, delete) can overwrite or corrupt project files like README.md, source code, etc.
+
+**Solution**: Implement isolated working directory that Agent operates in by default.
+
+**Checklist**:
+- ✅ Configuration: Add `working_directory` setting to `config/default.yaml`
+- ✅ Orchestrator initialization: Change to workspace on startup
+- ✅ Workspace restoration: Restore original directory on shutdown
+- ✅ Dedicated test command: Add `orchestrator test` for safe testing
+- ✅ Gitignore: Exclude workspace directories from version control
+
+**Implemented Files**:
+- `config/default.yaml` - Added `working_directory: "./.orchestrator/workspace"` setting
+- `src/orchestrator/core/orchestrator.py` - Modified `initialize()` and `shutdown()`
+  - Store original working directory
+  - Change to workspace on initialization
+  - Create workspace if doesn't exist
+  - Restore original directory on shutdown
+- `src/orchestrator/cli.py` - Added `orchestrator test` command
+  - Forces workspace isolation
+  - Displays clear message about isolated operations
+  - Prevents project file pollution during testing
+- `.gitignore` - Exclude `.orchestrator/workspace/` from git
+
+**Usage**:
+
+```bash
+# Normal mode - uses workspace from config (default: .orchestrator/workspace)
+orchestrator chat
+
+# Test mode - explicitly forces workspace isolation with clear messaging
+orchestrator test
+```
+
+**Benefits**:
+1. **Safety**: Project files protected from accidental modification
+2. **Clean Testing**: Test Agent behavior without risk
+3. **Isolation**: All file operations confined to workspace
+4. **Transparency**: Logs show both original and working directories
+5. **Flexibility**: Workspace path configurable in config file
+
+**Impact**: Critical feature for safe development and testing. Prevents data loss from Agent file operations.
+
+**Priority**: CRITICAL - Enables safe testing of orchestrator functionality
 
 **Completion**: 100%
 

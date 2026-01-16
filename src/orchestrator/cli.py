@@ -136,6 +136,45 @@ def chat(ctx: click.Context) -> None:
         raise
 
 
+@cli.command()
+@click.pass_context
+def test(ctx: click.Context) -> None:
+    """Start orchestrator in test mode with isolated workspace (Phase 3.5).
+
+    This mode ensures all Agent operations happen in an isolated workspace
+    (.orchestrator/workspace/) to prevent pollution of project files.
+    """
+    config_path = ctx.obj.get("config")
+    config = _load_config(config_path)
+
+    # Ensure working_directory is set for test mode
+    if "orchestrator" not in config:
+        config["orchestrator"] = {}
+
+    # Force workspace isolation in test mode
+    config["orchestrator"]["working_directory"] = "./.orchestrator/workspace"
+
+    console.print(
+        Panel(
+            "[bold cyan]Test Mode[/bold cyan]\n\n"
+            "All Agent operations will be isolated in:\n"
+            f"  [green]{Path('./.orchestrator/workspace').resolve()}[/green]\n\n"
+            "Your project files are safe from modification.\n"
+            "Type 'exit' or 'quit' to stop.",
+            title="🧪 Orchestrator Test Mode",
+            border_style="cyan",
+        )
+    )
+
+    try:
+        asyncio.run(_run_interactive(config))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopped by user[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise
+
+
 @cli.group()
 def task() -> None:
     """Task management commands."""
