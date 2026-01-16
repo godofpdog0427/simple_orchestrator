@@ -28,6 +28,7 @@ class Orchestrator:
         self.task_manager: Optional[Any] = None
         self.hook_engine: Optional[Any] = None
         self.skill_registry: Optional[Any] = None  # Phase 4A
+        self.subagent_manager: Optional[Any] = None  # Phase 4B
 
         # Setup logging
         self._setup_logging()
@@ -112,6 +113,7 @@ class Orchestrator:
         from orchestrator.hooks.engine import HookEngine
         from orchestrator.llm.client import LLMClient
         from orchestrator.skills.registry import SkillRegistry
+        from orchestrator.subagents.manager import SubagentManager
         from orchestrator.tasks.manager import TaskManager
         from orchestrator.tools.registry import ToolRegistry
 
@@ -159,6 +161,23 @@ class Orchestrator:
         self.skill_registry = SkillRegistry(skill_config)
         await self.skill_registry.initialize()
 
+        # Initialize subagent manager (Phase 4B)
+        subagent_config = self.config.get("subagents", {})
+        # Pass base config for subagent orchestrators
+        subagent_config["base_config"] = self.config
+        self.subagent_manager = SubagentManager(subagent_config, hook_engine=self.hook_engine)
+
+        # Register subagent spawn tool if enabled (Phase 4B)
+        if subagent_config.get("enabled", False):
+            from orchestrator.tools.builtin.subagent_spawn import SubagentSpawnTool
+
+            subagent_tool = SubagentSpawnTool(
+                subagent_manager=self.subagent_manager,
+                task_manager=self.task_manager,
+                orchestrator_factory=self._create_orchestrator_instance,
+            )
+            self.tool_registry.register(subagent_tool)
+
         logger.info("Orchestrator initialized successfully")
 
     async def shutdown(self) -> None:
@@ -171,6 +190,10 @@ class Orchestrator:
         # Trigger orchestrator.stop event
         await self._trigger_hook("orchestrator.stop", {"final_state": {"should_stop": self.should_stop}})
 
+        # Shutdown subagent manager (Phase 4B)
+        if self.subagent_manager:
+            await self.subagent_manager.shutdown()
+
         # Cleanup components
         if self.task_manager:
             await self.task_manager.save_state()
@@ -181,6 +204,20 @@ class Orchestrator:
             logger.info(f"Restored working directory: {self.original_cwd}")
 
         logger.info("Orchestrator shutdown complete")
+
+    def _create_orchestrator_instance(self, config: dict) -> "Orchestrator":
+        """
+        Factory method to create orchestrator instance for subagents.
+
+        This is used by SubagentManager to spawn isolated child orchestrators.
+
+        Args:
+            config: Configuration for the new orchestrator instance
+
+        Returns:
+            New Orchestrator instance
+        """
+        return Orchestrator(config)
 
     async def run(self) -> None:
         """

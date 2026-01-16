@@ -78,6 +78,15 @@ skills:
   auto_inject: true  # Automatically inject matching skills into prompt
   max_auto_inject: 3  # Maximum number of skills to auto-inject (prevent prompt bloat)
 
+subagents:
+  enabled: true  # Enable subagent system (Phase 4B)
+  max_concurrent: 3  # Maximum number of concurrent subagents
+  default_constraints:
+    max_tokens: 50000  # Default token budget for subagents
+    timeout_seconds: 300  # Default timeout (5 minutes)
+    max_iterations: 15  # Default max reasoning iterations
+    allowed_tools: ["bash", "file_read", "file_write"]  # Default allowed tools
+
 tasks:
   max_depth: 5  # Maximum subtask nesting depth (Phase 3)
   max_subtasks_per_task: 20  # Maximum subtasks per parent task (Phase 3)
