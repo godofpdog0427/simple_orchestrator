@@ -120,6 +120,7 @@ logging:
 cli:
   theme: "monokai"
   use_rich: true
+  use_live_display: true  # Use LiveDisplayManager with fixed layout zones (Phase 5B)
   show_progress: true
   history_file: "./.orchestrator/history"
   max_history_lines: 1000
