@@ -61,7 +61,7 @@ class DisplayManager:
             Text(text, style="dim cyan"),
             title="[bold cyan]💭 Thinking[/bold cyan]",
             border_style="cyan",
-            expand=False,
+            expand=True,
         )
         self.console.print(panel)
 
@@ -83,7 +83,7 @@ class DisplayManager:
             f"[bold]{tool_name}[/bold]\n{args_text}",
             title="[bold yellow]🔧 Executing Tool[/bold yellow]",
             border_style="yellow",
-            expand=False,
+            expand=True,
         )
         self.console.print(panel)
 
@@ -122,7 +122,7 @@ class DisplayManager:
             content,
             title=f"[bold {color}]📋 Tool Result[/bold {color}]",
             border_style=color,
-            expand=False,
+            expand=True,
         )
         self.console.print(panel)
 
@@ -197,7 +197,7 @@ class DisplayManager:
             content,
             title="[bold green]🚀 Starting Task[/bold green]",
             border_style="green",
-            expand=False,
+            expand=True,
         )
         self.console.print(panel)
 
@@ -224,7 +224,7 @@ class DisplayManager:
             content,
             title="[bold green]✅ Task Completed[/bold green]",
             border_style="green",
-            expand=False,
+            expand=True,
         )
         self.console.print(panel)
 
@@ -245,7 +245,7 @@ class DisplayManager:
             content,
             title="[bold red]❌ Task Failed[/bold red]",
             border_style="red",
-            expand=False,
+            expand=True,
         )
         self.console.print(panel)
 
