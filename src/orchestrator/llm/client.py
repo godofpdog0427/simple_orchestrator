@@ -236,6 +236,74 @@ class AnthropicProvider(LLMProvider):
 
         return None
 
+    async def chat_stream(
+        self, messages: list[dict], tools: Optional[list[dict]] = None
+    ):
+        """
+        Stream chat response from Anthropic API.
+
+        Yields text chunks as they arrive, then returns final LLMResponse.
+
+        Args:
+            messages: List of message dicts with role and content
+            tools: Optional list of tool definitions in Anthropic format
+
+        Yields:
+            str: Text chunks from the stream
+
+        Returns:
+            LLMResponse: Final complete response after stream ends
+        """
+        # Apply throttling if enabled
+        await self._apply_throttle()
+
+        # Separate system message from conversation
+        system_message = None
+        conversation_messages = []
+
+        for msg in messages:
+            if msg["role"] == "system":
+                system_message = msg["content"]
+            else:
+                conversation_messages.append(msg)
+
+        # Prepare API call parameters
+        params = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "messages": conversation_messages,
+        }
+
+        if system_message:
+            params["system"] = system_message
+
+        if tools:
+            params["tools"] = tools
+
+        logger.debug(f"Streaming Anthropic API with {len(conversation_messages)} messages")
+
+        # Use stream API
+        async with self.client.messages.stream(**params) as stream:
+            # Stream text chunks
+            async for text in stream.text_stream:
+                yield text
+
+            # Get final message
+            final_message = await stream.get_final_message()
+
+            # Return as LLMResponse
+            return LLMResponse(
+                content=final_message.content,
+                stop_reason=final_message.stop_reason,
+                usage={
+                    "input_tokens": final_message.usage.input_tokens,
+                    "output_tokens": final_message.usage.output_tokens,
+                },
+                model=final_message.model,
+                raw_response=final_message,
+            )
+
 
 class LLMClient:
     """Main LLM client that routes to appropriate provider."""
@@ -273,3 +341,28 @@ class LLMClient:
             LLMResponse object
         """
         return await self.provider.chat(messages, tools)
+
+    async def chat_stream(
+        self, messages: list[dict], tools: Optional[list[dict]] = None
+    ):
+        """
+        Stream chat response from LLM provider.
+
+        Args:
+            messages: List of message dicts
+            tools: Optional list of tool definitions
+
+        Yields:
+            str: Text chunks from the stream
+
+        Returns:
+            LLMResponse: Final complete response
+        """
+        # Check if provider supports streaming
+        if not hasattr(self.provider, "chat_stream"):
+            raise NotImplementedError(
+                f"Provider {type(self.provider).__name__} does not support streaming"
+            )
+
+        async for chunk in self.provider.chat_stream(messages, tools):
+            yield chunk
