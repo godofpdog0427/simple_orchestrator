@@ -48,6 +48,59 @@ class Orchestrator:
             ],
         )
 
+    def _resolve_relative_paths_in_config(self) -> None:
+        """
+        Convert relative paths in config to absolute paths.
+
+        This is necessary because we change working directory to workspace,
+        but config paths are relative to project root.
+
+        Must be called BEFORE changing working directory.
+        """
+        from pathlib import Path
+
+        # Helper function to resolve path
+        def resolve_path(path_str: str) -> str:
+            path = Path(path_str)
+            if not path.is_absolute():
+                return str((Path(self.original_cwd) / path).resolve())
+            return path_str
+
+        # Resolve hooks config_file
+        if "hooks" in self.config and "config_file" in self.config["hooks"]:
+            self.config["hooks"]["config_file"] = resolve_path(
+                self.config["hooks"]["config_file"]
+            )
+            logger.debug(f"Resolved hook config_file: {self.config['hooks']['config_file']}")
+
+        # Resolve logging file
+        if "logging" in self.config and "file" in self.config["logging"]:
+            self.config["logging"]["file"] = resolve_path(
+                self.config["logging"]["file"]
+            )
+            logger.debug(f"Resolved logging file: {self.config['logging']['file']}")
+
+        # Resolve persistence state_file
+        if "persistence" in self.config and "state_file" in self.config["persistence"]:
+            self.config["persistence"]["state_file"] = resolve_path(
+                self.config["persistence"]["state_file"]
+            )
+            logger.debug(f"Resolved persistence state_file: {self.config['persistence']['state_file']}")
+
+        # Resolve skills paths
+        if "skills" in self.config:
+            if "builtin_path" in self.config["skills"]:
+                self.config["skills"]["builtin_path"] = resolve_path(
+                    self.config["skills"]["builtin_path"]
+                )
+                logger.debug(f"Resolved skills builtin_path: {self.config['skills']['builtin_path']}")
+
+            if "user_path" in self.config["skills"]:
+                self.config["skills"]["user_path"] = resolve_path(
+                    self.config["skills"]["user_path"]
+                )
+                logger.debug(f"Resolved skills user_path: {self.config['skills']['user_path']}")
+
     async def initialize(self) -> None:
         """Initialize orchestrator components."""
         logger.info("Initializing orchestrator...")
@@ -70,6 +123,10 @@ class Orchestrator:
 
         # Store original directory for reference
         self.original_cwd = os.getcwd()
+
+        # Convert relative paths to absolute BEFORE changing directory (Hotfix)
+        # This fixes paths in config that are relative to project root
+        self._resolve_relative_paths_in_config()
 
         # Change to workspace
         os.chdir(working_dir_path)
