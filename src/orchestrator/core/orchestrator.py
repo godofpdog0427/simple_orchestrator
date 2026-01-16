@@ -52,10 +52,27 @@ class Orchestrator:
         logger.info("Initializing orchestrator...")
 
         # Import here to avoid circular imports
+        import os
+        from pathlib import Path
+
         from orchestrator.hooks.engine import HookEngine
         from orchestrator.llm.client import LLMClient
         from orchestrator.tasks.manager import TaskManager
         from orchestrator.tools.registry import ToolRegistry
+
+        # Setup isolated working directory (Phase 3.5)
+        orchestrator_config = self.config.get("orchestrator", {})
+        working_dir = orchestrator_config.get("working_directory", "./.orchestrator/workspace")
+        working_dir_path = Path(working_dir).resolve()
+        working_dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Store original directory for reference
+        self.original_cwd = os.getcwd()
+
+        # Change to workspace
+        os.chdir(working_dir_path)
+        logger.info(f"Working directory: {working_dir_path}")
+        logger.info(f"Original directory: {self.original_cwd}")
 
         # Initialize hook engine first
         hook_config = self.config.get("hooks", {})
@@ -82,6 +99,8 @@ class Orchestrator:
 
     async def shutdown(self) -> None:
         """Shutdown orchestrator and cleanup resources."""
+        import os
+
         logger.info("Shutting down orchestrator...")
         self.should_stop = True
 
@@ -91,6 +110,11 @@ class Orchestrator:
         # Cleanup components
         if self.task_manager:
             await self.task_manager.save_state()
+
+        # Restore original working directory (Phase 3.5)
+        if hasattr(self, "original_cwd"):
+            os.chdir(self.original_cwd)
+            logger.info(f"Restored working directory: {self.original_cwd}")
 
         logger.info("Orchestrator shutdown complete")
 
