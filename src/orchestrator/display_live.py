@@ -49,7 +49,7 @@ class LiveDisplayManager:
 
     def disable(self) -> None:
         """Disable display output."""
-        self._enabled = True
+        self._enabled = False
 
     def is_enabled(self) -> bool:
         """Check if display is enabled."""

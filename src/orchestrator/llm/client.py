@@ -22,6 +22,12 @@ class LLMResponse:
     raw_response: Any  # Original response object
 
 
+@dataclass
+class StreamChunk:
+    """Wrapper for stream chunk to distinguish from final response."""
+    text: str
+
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
@@ -242,17 +248,15 @@ class AnthropicProvider(LLMProvider):
         """
         Stream chat response from Anthropic API.
 
-        Yields text chunks as they arrive, then returns final LLMResponse.
+        Yields StreamChunk objects with text, then yields final LLMResponse.
 
         Args:
             messages: List of message dicts with role and content
             tools: Optional list of tool definitions in Anthropic format
 
         Yields:
-            str: Text chunks from the stream
-
-        Returns:
-            LLMResponse: Final complete response after stream ends
+            StreamChunk: Text chunks from the stream
+            LLMResponse: Final complete response (last yield)
         """
         # Apply throttling if enabled
         await self._apply_throttle()
@@ -287,13 +291,13 @@ class AnthropicProvider(LLMProvider):
         async with self.client.messages.stream(**params) as stream:
             # Stream text chunks
             async for text in stream.text_stream:
-                yield text
+                yield StreamChunk(text=text)
 
             # Get final message
             final_message = await stream.get_final_message()
 
-            # Return as LLMResponse
-            return LLMResponse(
+            # Yield final response as last item
+            yield LLMResponse(
                 content=final_message.content,
                 stop_reason=final_message.stop_reason,
                 usage={

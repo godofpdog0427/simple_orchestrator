@@ -30,6 +30,7 @@ class Orchestrator:
         self.skill_registry: Optional[Any] = None  # Phase 4A
         self.subagent_manager: Optional[Any] = None  # Phase 4B
         self.cache_manager: Optional[Any] = None  # Phase 5
+        self.display_manager: Optional[Any] = None  # Phase 5B streaming display
 
         # Setup logging
         self._setup_logging()
@@ -141,6 +142,17 @@ class Orchestrator:
         cache_config = self.config.get("cache", {})
         self.cache_manager = CacheManager(cache_config)
         set_cache_manager(self.cache_manager)  # Set global instance
+
+        # Initialize display manager (Phase 5B)
+        cli_config = self.config.get("cli", {})
+        use_live_display = cli_config.get("use_live_display", True)
+
+        if use_live_display:
+            from orchestrator.display_live import LiveDisplayManager
+            self.display_manager = LiveDisplayManager()
+        else:
+            from orchestrator.display import DisplayManager
+            self.display_manager = DisplayManager()
 
         # Initialize hook engine first
         hook_config = self.config.get("hooks", {})
@@ -376,82 +388,132 @@ class Orchestrator:
         max_iterations = self.config.get("orchestrator", {}).get("max_iterations", 20)
         conversation_history = []
 
-        for iteration in range(max_iterations):
-            logger.debug(f"Reasoning iteration {iteration + 1}/{max_iterations}")
+        # Start live display if using LiveDisplayManager (Phase 5B)
+        cli_config = self.config.get("cli", {})
+        use_live_display = cli_config.get("use_live_display", True)
 
-            # Prepare messages for LLM
-            messages = self._prepare_messages(task, context, conversation_history)
+        if use_live_display and hasattr(self.display_manager, 'start_live'):
+            self.display_manager.start_live()
 
-            # Get tool schemas for API
-            tools = context.get("tools", [])
+        try:
+            for iteration in range(max_iterations):
+                logger.debug(f"Reasoning iteration {iteration + 1}/{max_iterations}")
 
-            # Trigger llm.before_call event with iteration metadata
-            await self._trigger_hook(
-                "llm.before_call",
-                {"messages": messages, "tools": tools},
-                metadata={"iteration": iteration + 1, "max_iterations": max_iterations},
-            )
+                # Prepare messages for LLM
+                messages = self._prepare_messages(task, context, conversation_history)
 
-            # Call LLM with tools
-            response = await self.llm_client.chat(messages, tools=tools if tools else None)
+                # Get tool schemas for API
+                tools = context.get("tools", [])
 
-            # Extract reasoning text from response
-            reasoning_text = ""
-            for block in response.content:
-                if hasattr(block, "type") and block.type == "text":
-                    reasoning_text += block.text + "\n"
+                # Trigger llm.before_call event with iteration metadata
+                await self._trigger_hook(
+                    "llm.before_call",
+                    {"messages": messages, "tools": tools},
+                    metadata={"iteration": iteration + 1, "max_iterations": max_iterations},
+                )
 
-            # Trigger llm.after_call event with reasoning text
-            token_count = getattr(response, "usage", {}).get("total_tokens", "unknown")
-            await self._trigger_hook(
-                "llm.after_call",
-                {"response": response, "token_count": token_count, "reasoning_text": reasoning_text.strip()},
-            )
+                # Use streaming if available (Phase 5B)
+                if use_live_display and hasattr(self.llm_client.provider, 'chat_stream'):
+                    from orchestrator.llm.client import StreamChunk, LLMResponse as LLMResp
 
-            # Process response based on stop_reason
-            if response.stop_reason == "end_turn":
-                # Extract text content from response
-                text_content = []
-                for block in response.content:
-                    if hasattr(block, "type") and block.type == "text":
-                        text_content.append(block.text)
+                    # Clear thinking zone before streaming
+                    if hasattr(self.display_manager, 'clear_thinking'):
+                        self.display_manager.clear_thinking()
 
-                result = "\n".join(text_content) if text_content else "Task completed"
-                return result
+                    # Stream response
+                    reasoning_text = ""
+                    response = None
+                    stream_generator = self.llm_client.chat_stream(messages, tools=tools if tools else None)
 
-            elif response.stop_reason == "tool_use":
-                # Add assistant message with tool_use blocks to history
-                conversation_history.append({"role": "assistant", "content": response.content})
+                    # Consume stream - yields StreamChunk objects, then final LLMResponse
+                    async for item in stream_generator:
+                        if isinstance(item, StreamChunk):
+                            # Text chunk - add to display
+                            reasoning_text += item.text
+                            if hasattr(self.display_manager, 'update_thinking_stream'):
+                                self.display_manager.update_thinking_stream(item.text)
+                        elif isinstance(item, LLMResp):
+                            # Final response
+                            response = item
 
-                # Process each tool use
-                tool_results = []
-                for block in response.content:
-                    if hasattr(block, "type") and block.type == "tool_use":
-                        logger.info(f"Executing tool: {block.name}")
+                    # Verify we got a response
+                    if response is None:
+                        raise RuntimeError("Streaming API did not yield final LLMResponse")
 
-                        # Execute tool
-                        tool_result = await self._execute_tool(block.name, block.input)
+                else:
+                    # Fallback to non-streaming
+                    response = await self.llm_client.chat(messages, tools=tools if tools else None)
 
-                        # Build tool result in Anthropic format
-                        tool_results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": str(tool_result.data if tool_result.success else tool_result.error),
-                            }
-                        )
+                    # Extract reasoning text from response
+                    reasoning_text = ""
+                    for block in response.content:
+                        if hasattr(block, "type") and block.type == "text":
+                            reasoning_text += block.text + "\n"
 
-                # Add tool results as user message
-                conversation_history.append({"role": "user", "content": tool_results})
+                # Trigger llm.after_call event with reasoning text
+                token_count = getattr(response, "usage", {}).get("total_tokens", "unknown")
+                await self._trigger_hook(
+                    "llm.after_call",
+                    {"response": response, "token_count": token_count, "reasoning_text": reasoning_text.strip()},
+                )
 
-            elif response.stop_reason == "max_tokens":
-                logger.warning("Response hit max_tokens limit")
-                # Continue loop to get more output
+                # Process response based on stop_reason
+                if response.stop_reason == "end_turn":
+                    # Extract text content from response
+                    text_content = []
+                    for block in response.content:
+                        if hasattr(block, "type") and block.type == "text":
+                            text_content.append(block.text)
 
-            else:
-                logger.warning(f"Unknown stop_reason: {response.stop_reason}")
+                    result = "\n".join(text_content) if text_content else "Task completed"
+                    return result
 
-        raise RuntimeError(f"Task {task.id} exceeded max iterations ({max_iterations})")
+                elif response.stop_reason == "tool_use":
+                    # Add assistant message with tool_use blocks to history
+                    conversation_history.append({"role": "assistant", "content": response.content})
+
+                    # Process each tool use
+                    tool_results = []
+                    for block in response.content:
+                        if hasattr(block, "type") and block.type == "tool_use":
+                            logger.info(f"Executing tool: {block.name}")
+
+                            # Update display with tool execution
+                            if hasattr(self.display_manager, 'update_tool_status'):
+                                self.display_manager.update_tool_status(f"▶ Running: {block.name}")
+
+                            # Execute tool
+                            tool_result = await self._execute_tool(block.name, block.input)
+
+                            # Update display with result
+                            if hasattr(self.display_manager, 'update_tool_status'):
+                                status = "✓ Success" if tool_result.success else "✗ Failed"
+                                self.display_manager.update_tool_status(f"{status}: {block.name}")
+
+                            # Build tool result in Anthropic format
+                            tool_results.append(
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "content": str(tool_result.data if tool_result.success else tool_result.error),
+                                }
+                            )
+
+                    # Add tool results as user message
+                    conversation_history.append({"role": "user", "content": tool_results})
+
+                elif response.stop_reason == "max_tokens":
+                    logger.warning("Response hit max_tokens limit")
+                    # Continue loop to get more output
+
+                else:
+                    logger.warning(f"Unknown stop_reason: {response.stop_reason}")
+
+            raise RuntimeError(f"Task {task.id} exceeded max iterations ({max_iterations})")
+        finally:
+            # Stop live display when reasoning loop ends
+            if use_live_display and hasattr(self.display_manager, 'stop_live'):
+                self.display_manager.stop_live()
 
     def _prepare_messages(
         self, task: Task, context: dict[str, Any], conversation_history: list[dict]
