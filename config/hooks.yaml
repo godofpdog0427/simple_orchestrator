@@ -1,6 +1,16 @@
 hooks:
-  # Wildcard hook - logs all events
+  # Display hook - real-time CLI output (highest priority)
   "*":
+    - path: "orchestrator.hooks.builtin.display:DisplayHook"
+      enabled: true
+      priority: 5
+      config:
+        enabled: true
+        show_iterations: true
+        show_reasoning: true
+        show_tools: true
+        show_todos: true
+
     - path: "orchestrator.hooks.builtin.logging:LoggingHook"
       enabled: true
       priority: 10

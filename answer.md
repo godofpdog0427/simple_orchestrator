@@ -30,3 +30,35 @@
 - ./README.md: 219 字
 - ./venv/lib64/python3.12/site-packages/docstring_parser-0.17.0.dist-info/licenses/LICENSE.md: 171 字
 - ./venv/lib/python3.12/site-packages/docstring_parser-0.17.0.dist-info/licenses/LICENSE.md: 171 字
+
+---
+
+# Python 檔案 Class 分析結果
+
+## 包含最多 Class 的檔案
+
+**檔案名稱**: ./venv/lib/python3.12/site-packages/pydantic/v1/errors.py
+
+**Class 數量**: 99
+
+## 統計摘要
+
+- 總共分析了 **2969** 個 Python 檔案
+- 包含最多 class 的檔案有 **99** 個 class
+
+## 前 10 名包含最多 Class 的檔案
+
+1. **./venv/lib/python3.12/site-packages/pydantic/v1/errors.py**: 99 classes
+2. **./venv/lib/python3.12/site-packages/pydantic_core/core_schema.py**: 77 classes
+3. **./venv/lib/python3.12/site-packages/pygments/lexers/templates.py**: 69 classes
+4. **./venv/lib/python3.12/site-packages/aiohttp/web_exceptions.py**: 59 classes
+5. **./venv/lib/python3.12/site-packages/typing_extensions.py**: 50 classes
+6. **./venv/lib/python3.12/site-packages/pydantic/v1/types.py**: 42 classes
+7. **./venv/lib/python3.12/site-packages/pip/_internal/exceptions.py**: 40 classes
+8. **./venv/lib/python3.12/site-packages/pip/_vendor/urllib3/exceptions.py**: 37 classes
+9. **./venv/lib/python3.12/site-packages/pip/_vendor/pkg_resources/__init__.py**: 34 classes
+10. **./venv/lib/python3.12/site-packages/pydantic/types.py**: 32 classes
+
+---
+
+*分析完成時間: 2025年1月15日*

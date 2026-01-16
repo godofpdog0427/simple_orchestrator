@@ -249,15 +249,28 @@ class Orchestrator:
             # Get tool schemas for API
             tools = context.get("tools", [])
 
-            # Trigger llm.before_call event
-            await self._trigger_hook("llm.before_call", {"messages": messages, "tools": tools})
+            # Trigger llm.before_call event with iteration metadata
+            await self._trigger_hook(
+                "llm.before_call",
+                {"messages": messages, "tools": tools},
+                metadata={"iteration": iteration + 1, "max_iterations": max_iterations},
+            )
 
             # Call LLM with tools
             response = await self.llm_client.chat(messages, tools=tools if tools else None)
 
-            # Trigger llm.after_call event
+            # Extract reasoning text from response
+            reasoning_text = ""
+            for block in response.content:
+                if hasattr(block, "type") and block.type == "text":
+                    reasoning_text += block.text + "\n"
+
+            # Trigger llm.after_call event with reasoning text
             token_count = getattr(response, "usage", {}).get("total_tokens", "unknown")
-            await self._trigger_hook("llm.after_call", {"response": response, "token_count": token_count})
+            await self._trigger_hook(
+                "llm.after_call",
+                {"response": response, "token_count": token_count, "reasoning_text": reasoning_text.strip()},
+            )
 
             # Process response based on stop_reason
             if response.stop_reason == "end_turn":
@@ -431,13 +444,14 @@ If you need more information from the user, ask clearly and specifically."""
 
         return result
 
-    async def _trigger_hook(self, event: str, data: dict[str, Any]) -> Any:
+    async def _trigger_hook(self, event: str, data: dict[str, Any], metadata: dict[str, Any] | None = None) -> Any:
         """
         Trigger a hook event.
 
         Args:
             event: Event name
             data: Event data
+            metadata: Optional metadata to pass to hooks
 
         Returns:
             HookResult
@@ -447,4 +461,4 @@ If you need more information from the user, ask clearly and specifically."""
 
             return HookResult(action="continue")
 
-        return await self.hook_engine.trigger(event, data, orchestrator_state=self)
+        return await self.hook_engine.trigger(event, data, orchestrator_state=self, metadata=metadata)

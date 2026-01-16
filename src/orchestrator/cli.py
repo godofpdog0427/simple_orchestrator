@@ -76,10 +76,8 @@ async def _run_interactive(config: dict) -> None:
                     continue
 
                 # Process input with orchestrator
-                result = await orchestrator.process_input(user_input)
-
-                if result:
-                    console.print(result)
+                # Result is now displayed via DisplayHook in real-time
+                await orchestrator.process_input(user_input)
 
             except KeyboardInterrupt:
                 continue

@@ -3,7 +3,7 @@
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Last Updated**: 2026-01-16
-**Current Phase**: Phase 2.5 (TodoList Tool - In Progress)
+**Current Phase**: Phase 2.6 (Rich CLI Display - Completed)
 
 ---
 
@@ -1069,7 +1069,7 @@ class TaskValidationError(FatalError):
 
 **Completion**: ~95% (user_extensions auto-discovery deferred to Phase 4)
 
-### Phase 2.5: TodoList Tool (Hotfix) 🚧 IN PROGRESS
+### Phase 2.5: TodoList Tool (Hotfix) ✅ COMPLETED
 
 **Reason for Insertion**: Critical capability gap discovered - Agent cannot track progress across long reasoning loops (max 20 iterations).
 
@@ -1083,7 +1083,7 @@ class TaskValidationError(FatalError):
 - ✅ Register tool in ToolRegistry
 - ✅ Update system prompt with usage instructions
 - ✅ Enable in configuration (config/default.yaml)
-- ⏳ Testing with complex multi-step tasks
+- ✅ Testing with complex multi-step tasks
 
 **Implemented Files**:
 - `src/orchestrator/tasks/models.py` - Added TodoItem model and Task.todo_list field
@@ -1113,7 +1113,58 @@ class TaskValidationError(FatalError):
 
 **Priority**: HIGH - Blocks effective execution of complex tasks
 
-**Completion**: ~90% (implementation done, testing pending)
+**Completion**: 100%
+
+### Phase 2.6: Rich CLI Display & Streaming Output ✅ COMPLETED
+
+**Reason for Insertion**: User cannot see Agent's real-time progress during task execution.
+
+**Problem**: Terminal output issues identified by user:
+1. Cannot see which TODO item is currently running
+2. Cannot see Agent's reasoning/thinking process (internal monologue)
+3. No streaming output - all results appear at end
+4. Cannot see which tools are executing and with what parameters
+
+**Solution**: Implement DisplayHook with Rich library for real-time terminal feedback.
+
+**Checklist**:
+- ✅ Create DisplayManager using Rich library
+  - ✅ Panel displays for thinking, tool execution, task lifecycle
+  - ✅ Formatted table for TODO status with icons (✅⏳⏸)
+  - ✅ Color-coded output (cyan=thinking, yellow=tools, green=success)
+- ✅ Create DisplayHook with highest priority (5)
+  - ✅ Monitor all events via wildcard "*"
+  - ✅ Display thinking from llm.after_call
+  - ✅ Display tool execution with parameters
+  - ✅ Special handling for todo_list to show formatted table
+  - ✅ Show iteration progress (X/20)
+- ✅ Modify Orchestrator to extract reasoning text
+  - ✅ Parse response.content for text blocks
+  - ✅ Pass reasoning_text in llm.after_call event
+  - ✅ Pass iteration metadata to hooks
+- ✅ Register DisplayHook in hooks.yaml
+- ✅ Update CLI to remove final single output
+
+**Implemented Files**:
+- `src/orchestrator/cli/display.py` - DisplayManager with Rich UI components
+- `src/orchestrator/hooks/builtin/display.py` - DisplayHook for real-time event monitoring
+- `src/orchestrator/core/orchestrator.py` - Extract reasoning, pass metadata to hooks
+- `src/orchestrator/hooks/engine.py` - Support metadata parameter in trigger()
+- `src/orchestrator/cli.py` - Removed final output (now via DisplayHook)
+- `config/hooks.yaml` - Registered DisplayHook with priority=5
+
+**Key Features**:
+- **Real-time Feedback**: User sees Agent thinking, tool execution, TODO progress instantly
+- **Structured Display**: Rich panels and tables for clean, organized output
+- **TODO Visibility**: Formatted table shows current TODO item status with icons
+- **Iteration Tracking**: Shows "Iteration 5/20" to track reasoning loop progress
+- **Reasoning Transparency**: Displays Agent's internal monologue before each action
+
+**Impact**: Dramatically improves user experience - user can now follow Agent's thought process and see real-time progress.
+
+**Priority**: HIGH - Critical UX improvement for usability
+
+**Completion**: 100%
 
 ### Phase 3: Task Hierarchy & Dependencies ⏳ NOT STARTED
 

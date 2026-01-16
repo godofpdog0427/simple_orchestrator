@@ -155,6 +155,7 @@ class HookEngine:
         event: str,
         data: dict[str, Any],
         orchestrator_state: Optional[Any] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> HookResult:
         """
         Trigger all hooks for an event.
@@ -191,7 +192,7 @@ class HookEngine:
             event=event,
             data=data,
             orchestrator_state=orchestrator_state,
-            metadata={},
+            metadata=metadata or {},
         )
 
         for priority, hook in all_hooks:
