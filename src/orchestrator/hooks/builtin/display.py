@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from orchestrator.cli.display import get_display_manager
+from orchestrator.display import get_display_manager
 from orchestrator.hooks.base import Hook, HookContext, HookResult
 
 logger = logging.getLogger(__name__)
