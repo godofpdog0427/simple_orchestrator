@@ -29,6 +29,7 @@ class Orchestrator:
         self.hook_engine: Optional[Any] = None
         self.skill_registry: Optional[Any] = None  # Phase 4A
         self.subagent_manager: Optional[Any] = None  # Phase 4B
+        self.cache_manager: Optional[Any] = None  # Phase 5
 
         # Setup logging
         self._setup_logging()
@@ -110,6 +111,7 @@ class Orchestrator:
         import os
         from pathlib import Path
 
+        from orchestrator.cache.manager import CacheManager, set_cache_manager
         from orchestrator.hooks.engine import HookEngine
         from orchestrator.llm.client import LLMClient
         from orchestrator.skills.registry import SkillRegistry
@@ -134,6 +136,11 @@ class Orchestrator:
         os.chdir(working_dir_path)
         logger.info(f"Working directory: {working_dir_path}")
         logger.info(f"Original directory: {self.original_cwd}")
+
+        # Initialize cache manager (Phase 5)
+        cache_config = self.config.get("cache", {})
+        self.cache_manager = CacheManager(cache_config)
+        set_cache_manager(self.cache_manager)  # Set global instance
 
         # Initialize hook engine first
         hook_config = self.config.get("hooks", {})
@@ -562,6 +569,13 @@ If you need more information from the user, ask clearly and specifically."""
         """
         logger.info(f"Executing tool: {tool_name}")
 
+        # Check cache for tool result (Phase 5)
+        if self.cache_manager and self.cache_manager.tool_results_enabled:
+            cached_result = self.cache_manager.get_cached_tool_result(tool_name, tool_args)
+            if cached_result is not None:
+                logger.info(f"Cache hit for tool: {tool_name}")
+                return cached_result
+
         tool = self.tool_registry.get(tool_name)
         if not tool:
             from orchestrator.tools.base import ToolResult
@@ -612,6 +626,11 @@ If you need more information from the user, ask clearly and specifically."""
         # Execute tool
         result = await tool.execute(**tool_args)
         logger.info(f"Tool result: {result.success}")
+
+        # Cache successful tool results (Phase 5)
+        if self.cache_manager and self.cache_manager.tool_results_enabled and result.success:
+            self.cache_manager.cache_tool_result(tool_name, tool_args, result)
+            logger.debug(f"Cached tool result: {tool_name}")
 
         # Trigger tool.after_execute event
         await self._trigger_hook(

@@ -3,7 +3,7 @@
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Last Updated**: 2026-01-16
-**Current Phase**: Phase 4 (Skill Registry & Subagents - Completed)
+**Current Phase**: Phase 5A (Tool Result Caching - Completed)
 
 ---
 
@@ -1679,19 +1679,101 @@ Orchestrator:
 
 **Estimated Effort**: 4-5 days
 
-### Phase 5: Memory & Optimization ⏳ NOT STARTED
+### Phase 5A: Tool Result Caching ✅ COMPLETED
 
-**Goal**: Improve efficiency through caching and cross-session memory.
+**Goal**: Improve efficiency through tool result caching with TTL.
 
 **Checklist**:
-- [ ] Tool result caching
-  - [ ] Cache identical tool calls
-  - [ ] TTL-based invalidation
-  - [ ] Cache hit metrics
-- [ ] LLM response caching
-  - [ ] Cache repeated queries
-  - [ ] Semantic similarity matching
-  - [ ] Privacy-aware caching (no sensitive data)
+- ✅ Cache system infrastructure
+  - ✅ CacheEntry model with TTL and metadata
+  - ✅ CacheStats for performance tracking
+  - ✅ Cache key generation (SHA256 hash)
+- ✅ Tool result caching
+  - ✅ Cache identical tool calls
+  - ✅ TTL-based invalidation
+  - ✅ Cache hit/miss metrics
+  - ✅ Automatic expired entry cleanup
+  - ✅ Max entries limit with LRU eviction
+- ✅ Integration
+  - ✅ CacheManager in Orchestrator
+  - ✅ Tool execution caching
+  - ✅ Cache statistics hook
+  - ✅ Configuration in config/default.yaml
+
+**Implemented Files**:
+- `src/orchestrator/cache/models.py` - Cache data models
+  - `CacheEntry` - Entry with TTL, hits, metadata
+  - `CacheStats` - Hit/miss/eviction statistics
+  - `generate_cache_key()` - SHA256 hash key generation
+- `src/orchestrator/cache/manager.py` - CacheManager implementation
+  - `get()` / `set()` - Basic cache operations
+  - `cache_tool_result()` / `get_cached_tool_result()` - Tool caching
+  - `cache_llm_response()` / `get_cached_llm_response()` - LLM caching
+  - `cleanup_expired()` - TTL-based cleanup
+  - `get_stats()` - Statistics retrieval
+- `src/orchestrator/hooks/builtin/cache.py` - Cache statistics hook
+  - Periodic cache stats logging
+  - Automatic expired entry cleanup
+- `src/orchestrator/core/orchestrator.py` - Integration
+  - Initialize CacheManager
+  - Check cache before tool execution
+  - Cache successful tool results
+- `config/default.yaml` - Cache configuration
+
+**Key Features**:
+
+1. **TTL-based Caching**:
+   - Configurable default TTL (default: 3600s = 1 hour)
+   - Per-entry TTL override support
+   - Automatic expiration checking on access
+   - Periodic cleanup of expired entries
+
+2. **Cache Key Generation**:
+   - SHA256 hash of tool name + arguments
+   - Deterministic and collision-resistant
+   - JSON serialization with sorted keys
+
+3. **Resource Management**:
+   - Max entries limit (default: 1000)
+   - LRU eviction when full
+   - Memory-efficient storage
+
+4. **Statistics Tracking**:
+   - Hit/miss counters
+   - Hit rate calculation
+   - Eviction tracking
+   - Total entries count
+
+5. **Safety Features**:
+   - Only cache successful tool results
+   - LLM response caching disabled by default
+   - Configurable enable/disable per cache type
+
+**Configuration**:
+```yaml
+cache:
+  enabled: true
+  ttl: 3600  # 1 hour
+  max_entries: 1000
+  tool_results: true
+  llm_responses: false
+```
+
+**Benefits**:
+1. **Performance**: Avoid redundant tool executions
+2. **Cost Reduction**: Fewer API calls for repeated operations
+3. **Consistency**: Same input always returns cached result
+4. **Observability**: Cache hit rate metrics
+
+**Impact**: Significantly improves performance for workflows with repeated tool calls (e.g., reading same files, checking same status).
+
+**Completion**: 100%
+
+### Phase 5B: Advanced Optimization ⏳ NOT STARTED
+
+**Goal**: Advanced performance features (cross-session memory, parallel execution).
+
+**Checklist**:
 - [ ] Cross-session memory
   - [ ] Embeddings generation (tool results, task outcomes)
   - [ ] Vector database (ChromaDB)
@@ -1703,7 +1785,9 @@ Orchestrator:
   - [ ] Streaming responses
   - [ ] Token usage tracking and budgets
 
-**Estimated Effort**: 5-7 days
+**Note**: Phase 5 was split into 5A (Tool Caching - Completed) and 5B (Advanced Features - Not Started).
+
+**Estimated Effort**: 4-5 days
 
 ---
 
