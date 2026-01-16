@@ -1,6 +1,6 @@
 orchestrator:
   name: "simple-orchestrator"
-  max_iterations: 20
+  max_iterations: 30
   debug: false
 
 llm:
@@ -62,11 +62,17 @@ tools:
     enabled: true
     requires_approval: false
 
+  task_decompose:
+    enabled: true
+    requires_approval: false
+
   directories:
     - "./user_extensions/tools"
 
 tasks:
-  max_depth: 5
+  max_depth: 5  # Maximum subtask nesting depth (Phase 3)
+  max_subtasks_per_task: 20  # Maximum subtasks per parent task (Phase 3)
+  auto_block_on_dependency: true  # Auto set status to BLOCKED if dependencies not met (Phase 3)
   autosave_interval: 60
   max_pending_tasks: 100
 

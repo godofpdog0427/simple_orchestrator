@@ -132,20 +132,125 @@ class TaskManager:
 
     async def get_next_executable_task(self) -> Optional[Task]:
         """
-        Get the next task that can be executed.
+        Get the next task that can be executed (Phase 3 implementation).
 
-        For Phase 1 (no hierarchy/dependencies):
-        - Just returns the first PENDING task
+        A task is executable if:
+        1. Status is PENDING
+        2. All dependencies (depends_on) are COMPLETED
+        3. If it has subtasks, all subtasks are COMPLETED
+        4. Parent task (if exists) is IN_PROGRESS
 
         Returns:
-            Next executable task or None
+            Next executable task or None (sorted by priority)
         """
         pending_tasks = await self.list_tasks(status=TaskStatus.PENDING)
 
         if not pending_tasks:
             return None
 
-        return pending_tasks[0]
+        # Filter for executable tasks
+        executable_tasks = []
+        for task in pending_tasks:
+            if await self._is_task_executable(task):
+                executable_tasks.append(task)
+
+        if not executable_tasks:
+            return None
+
+        # Sort by priority (CRITICAL > HIGH > MEDIUM > LOW)
+        from orchestrator.tasks.models import TaskPriority
+
+        priority_order = {
+            TaskPriority.CRITICAL: 0,
+            TaskPriority.HIGH: 1,
+            TaskPriority.MEDIUM: 2,
+            TaskPriority.LOW: 3,
+        }
+
+        executable_tasks.sort(key=lambda t: priority_order.get(t.priority, 999))
+
+        return executable_tasks[0]
+
+    async def _is_task_executable(self, task: Task) -> bool:
+        """
+        Check if a task is ready to be executed.
+
+        Args:
+            task: Task to check
+
+        Returns:
+            True if executable, False otherwise
+        """
+        # 1. Check dependencies - all must be COMPLETED
+        for dep_id in task.depends_on:
+            dep_task = await self.get_task(dep_id)
+            if not dep_task or dep_task.status != TaskStatus.COMPLETED:
+                return False
+
+        # 2. Check subtasks - all must be COMPLETED
+        for subtask_id in task.subtasks:
+            subtask = await self.get_task(subtask_id)
+            if not subtask or subtask.status != TaskStatus.COMPLETED:
+                return False
+
+        # 3. Check parent - must be IN_PROGRESS if parent exists
+        if task.parent_id:
+            parent = await self.get_task(task.parent_id)
+            if not parent or parent.status not in [TaskStatus.IN_PROGRESS, TaskStatus.COMPLETED]:
+                return False
+
+        return True
+
+    async def get_execution_order(self, task_ids: list[str]) -> list[Task]:
+        """
+        Get tasks in dependency-safe execution order using topological sort.
+
+        Uses Kahn's algorithm for topological sorting.
+
+        Args:
+            task_ids: List of task IDs to order
+
+        Returns:
+            List of tasks in execution order
+
+        Raises:
+            ValueError: If dependency cycle detected
+        """
+        # Build in-degree map (number of dependencies for each task)
+        in_degree: dict[str, int] = {}
+        task_map: dict[str, Task] = {}
+
+        for task_id in task_ids:
+            task = await self.get_task(task_id)
+            if task:
+                task_map[task_id] = task
+                in_degree[task_id] = len(task.depends_on)
+
+        # Queue of tasks with no dependencies
+        queue = [tid for tid in task_ids if in_degree.get(tid, 0) == 0]
+        result = []
+
+        while queue:
+            # Process task with no remaining dependencies
+            task_id = queue.pop(0)
+            task = task_map.get(task_id)
+            if not task:
+                continue
+
+            result.append(task)
+
+            # Reduce in-degree for blocked tasks
+            for blocked_id in task.blocks:
+                if blocked_id in in_degree:
+                    in_degree[blocked_id] -= 1
+                    if in_degree[blocked_id] == 0:
+                        queue.append(blocked_id)
+
+        # Check if all tasks were processed (cycle detection)
+        if len(result) != len([t for t in task_map.values()]):
+            raise ValueError("Dependency cycle detected in task graph")
+
+        return result
 
     async def save_state(self, path: Optional[Path] = None) -> None:
         """
@@ -215,22 +320,272 @@ class TaskManager:
         except Exception as e:
             logger.error(f"Error loading task state: {e}", exc_info=True)
 
-    async def decompose_task(self, task_id: str, subtasks: list[Task]) -> Task:
+    async def create_subtask(
+        self,
+        parent_id: str,
+        title: str,
+        description: Optional[str] = None,
+        priority: Optional["TaskPriority"] = None,
+        **kwargs,
+    ) -> Task:
         """
-        Break down a task into subtasks.
-
-        Note: For Phase 1, this is a placeholder.
-        Full implementation in Phase 3 (hierarchical tasks).
+        Create a subtask under a parent task.
 
         Args:
-            task_id: Parent task ID
-            subtasks: List of subtask definitions
+            parent_id: Parent task ID
+            title: Subtask title
+            description: Subtask description
+            priority: Task priority
+            **kwargs: Additional task fields
 
         Returns:
-            Updated parent task
+            Created subtask
+
+        Raises:
+            KeyError: If parent task not found
+            RuntimeError: If max depth exceeded
         """
-        logger.warning("Task decomposition not implemented in Phase 1")
+        # Validate parent exists
+        parent = await self.get_task(parent_id)
+        if not parent:
+            raise KeyError(f"Parent task not found: {parent_id}")
+
+        # Check depth limit
+        max_depth = self.config.get("max_depth", 5)
+        depth = await self._get_task_depth(parent_id)
+        if depth >= max_depth:
+            raise RuntimeError(
+                f"Max task depth ({max_depth}) exceeded. Cannot create subtask under {parent_id}"
+            )
+
+        # Check subtask count limit
+        max_subtasks = self.config.get("max_subtasks_per_task", 20)
+        if len(parent.subtasks) >= max_subtasks:
+            raise RuntimeError(
+                f"Max subtasks per task ({max_subtasks}) exceeded for {parent_id}"
+            )
+
+        # Create subtask
+        from orchestrator.tasks.models import TaskPriority
+
+        subtask = Task(
+            title=title,
+            description=description,
+            parent_id=parent_id,
+            priority=priority or TaskPriority.MEDIUM,
+            **kwargs,
+        )
+
+        # Add to task manager
+        await self.create_task(subtask)
+
+        # Update parent's subtasks list
+        parent.subtasks.append(subtask.id)
+        parent.updated_at = datetime.utcnow()
+
+        logger.info(f"Created subtask {subtask.id} under parent {parent_id}")
+
+        return subtask
+
+    async def _get_task_depth(self, task_id: str) -> int:
+        """
+        Get the depth of a task in the hierarchy.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Depth (0 for root tasks, 1 for direct children, etc.)
+        """
+        task = await self.get_task(task_id)
+        if not task or not task.parent_id:
+            return 0
+
+        return 1 + await self._get_task_depth(task.parent_id)
+
+    async def add_dependency(self, task_id: str, depends_on_id: str) -> None:
+        """
+        Add a dependency: task_id depends on depends_on_id.
+
+        This means task_id cannot start until depends_on_id is COMPLETED.
+
+        Args:
+            task_id: Task that has the dependency
+            depends_on_id: Task that must complete first
+
+        Raises:
+            KeyError: If either task not found
+            ValueError: If dependency would create a cycle
+        """
+        # Validate both tasks exist
+        task = await self.get_task(task_id)
+        depends_on_task = await self.get_task(depends_on_id)
+
+        if not task:
+            raise KeyError(f"Task not found: {task_id}")
+        if not depends_on_task:
+            raise KeyError(f"Dependency task not found: {depends_on_id}")
+
+        # Check for self-dependency
+        if task_id == depends_on_id:
+            raise ValueError("Task cannot depend on itself")
+
+        # Check for cycles
+        if self._has_dependency_cycle(task_id, depends_on_id):
+            raise ValueError(
+                f"Adding dependency {task_id} -> {depends_on_id} would create a cycle"
+            )
+
+        # Add dependency
+        if depends_on_id not in task.depends_on:
+            task.depends_on.append(depends_on_id)
+            task.updated_at = datetime.utcnow()
+
+        # Add to blocks list
+        if task_id not in depends_on_task.blocks:
+            depends_on_task.blocks.append(task_id)
+            depends_on_task.updated_at = datetime.utcnow()
+
+        # Auto-block task if dependency not completed
+        auto_block = self.config.get("auto_block_on_dependency", True)
+        if auto_block and depends_on_task.status != TaskStatus.COMPLETED:
+            if task.status == TaskStatus.PENDING:
+                task.status = TaskStatus.BLOCKED
+                logger.info(
+                    f"Task {task_id} auto-blocked (waiting for {depends_on_id})"
+                )
+
+        logger.info(f"Added dependency: {task_id} depends on {depends_on_id}")
+
+    async def remove_dependency(self, task_id: str, depends_on_id: str) -> None:
+        """
+        Remove a dependency relationship.
+
+        Args:
+            task_id: Task that has the dependency
+            depends_on_id: Task to remove from dependencies
+
+        Raises:
+            KeyError: If either task not found
+        """
+        task = await self.get_task(task_id)
+        depends_on_task = await self.get_task(depends_on_id)
+
+        if not task:
+            raise KeyError(f"Task not found: {task_id}")
+        if not depends_on_task:
+            raise KeyError(f"Dependency task not found: {depends_on_id}")
+
+        # Remove dependency
+        if depends_on_id in task.depends_on:
+            task.depends_on.remove(depends_on_id)
+            task.updated_at = datetime.utcnow()
+
+        # Remove from blocks list
+        if task_id in depends_on_task.blocks:
+            depends_on_task.blocks.remove(task_id)
+            depends_on_task.updated_at = datetime.utcnow()
+
+        logger.info(f"Removed dependency: {task_id} no longer depends on {depends_on_id}")
+
+    def _has_dependency_cycle(self, task_id: str, new_dependency_id: str) -> bool:
+        """
+        Check if adding a dependency would create a cycle.
+
+        Uses DFS to check if there's a path from new_dependency_id back to task_id.
+        If such a path exists, adding task_id -> new_dependency_id creates a cycle.
+
+        Args:
+            task_id: Task that would get the new dependency
+            new_dependency_id: Task to add as dependency
+
+        Returns:
+            True if cycle would be created, False otherwise
+        """
+        visited = set()
+        return self._has_cycle_dfs(new_dependency_id, task_id, visited)
+
+    def _has_cycle_dfs(self, start: str, target: str, visited: set) -> bool:
+        """
+        DFS to check if path exists from start to target.
+
+        Args:
+            start: Starting task ID
+            target: Target task ID
+            visited: Set of visited task IDs
+
+        Returns:
+            True if path exists, False otherwise
+        """
+        if start == target:
+            return True
+
+        if start in visited:
+            return False
+
+        visited.add(start)
+
+        task = self.tasks.get(start)
+        if not task:
+            return False
+
+        # Check all tasks that start depends on
+        for dep_id in task.depends_on:
+            if self._has_cycle_dfs(dep_id, target, visited):
+                return True
+
+        return False
+
+    async def get_dependencies(self, task_id: str) -> dict[str, list[Task]]:
+        """
+        Get all dependency relationships for a task.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Dictionary with dependency information:
+            {
+                "depends_on": [list of tasks this task depends on],
+                "blocks": [list of tasks blocked by this task],
+                "subtasks": [list of child tasks],
+                "parent": parent task or None
+            }
+
+        Raises:
+            KeyError: If task not found
+        """
         task = await self.get_task(task_id)
         if not task:
             raise KeyError(f"Task not found: {task_id}")
-        return task
+
+        result = {
+            "depends_on": [],
+            "blocks": [],
+            "subtasks": [],
+            "parent": None,
+        }
+
+        # Get depends_on tasks
+        for dep_id in task.depends_on:
+            dep_task = await self.get_task(dep_id)
+            if dep_task:
+                result["depends_on"].append(dep_task)
+
+        # Get blocked tasks
+        for blocked_id in task.blocks:
+            blocked_task = await self.get_task(blocked_id)
+            if blocked_task:
+                result["blocks"].append(blocked_task)
+
+        # Get subtasks
+        for subtask_id in task.subtasks:
+            subtask = await self.get_task(subtask_id)
+            if subtask:
+                result["subtasks"].append(subtask)
+
+        # Get parent
+        if task.parent_id:
+            result["parent"] = await self.get_task(task.parent_id)
+
+        return result

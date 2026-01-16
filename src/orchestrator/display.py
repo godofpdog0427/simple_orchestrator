@@ -137,8 +137,8 @@ class DisplayManager:
             return
 
         table = Table(title="📝 TODO Progress", show_header=True, header_style="bold magenta")
-        table.add_column("#", style="dim", width=3)
-        table.add_column("Status", width=12)
+        table.add_column("#", style="dim", width=2)
+        table.add_column("Status", width=15)
         table.add_column("Task", style="white")
 
         for idx, todo in enumerate(todos, 1):
@@ -312,3 +312,96 @@ def set_display_manager(manager: DisplayManager) -> None:
     """
     global _display_manager
     _display_manager = manager
+
+
+# Task Hierarchy Display Methods (Phase 3)
+
+def show_task_hierarchy(task: Any, all_tasks: dict, depth: int = 0) -> None:
+    """
+    Display task hierarchy tree.
+
+    Args:
+        task: Task object to display
+        all_tasks: Dictionary of all tasks {task_id: task}
+        depth: Current nesting depth
+    """
+    display = get_display_manager()
+    if not display._enabled:
+        return
+
+    # Build tree representation
+    indent = "  " * depth
+    prefix = "├─ " if depth > 0 else "📋 "
+
+    # Status icon
+    status_icons = {
+        "pending": "⏸️ ",
+        "in_progress": "⏳",
+        "completed": "✅",
+        "failed": "❌",
+        "blocked": "🔒",
+        "cancelled": "⛔",
+    }
+    icon = status_icons.get(task.status.value, "?")
+
+    # Task line
+    task_line = f"{indent}{prefix}{icon} {task.title}"
+
+    # Add dependency info if any
+    if task.depends_on:
+        dep_count = len(task.depends_on)
+        task_line += f" [dim](depends on {dep_count} task{'s' if dep_count != 1 else ''})[/dim]"
+
+    display.console.print(task_line)
+
+    # Recursively display subtasks
+    for subtask_id in task.subtasks:
+        subtask = all_tasks.get(subtask_id)
+        if subtask:
+            show_task_hierarchy(subtask, all_tasks, depth + 1)
+
+
+def show_dependency_info(task: Any, dependencies: dict) -> None:
+    """
+    Show dependency relationships for a task.
+
+    Args:
+        task: Task object
+        dependencies: Dictionary from task_manager.get_dependencies()
+    """
+    display = get_display_manager()
+    if not display._enabled:
+        return
+
+    from rich.panel import Panel
+    from rich.table import Table
+
+    # Build dependency info
+    lines = []
+
+    if dependencies["depends_on"]:
+        lines.append("[bold]Depends on:[/bold]")
+        for dep in dependencies["depends_on"]:
+            status_color = "green" if dep.status.value == "completed" else "yellow"
+            lines.append(f"  → [{status_color}]{dep.title}[/{status_color}] ({dep.status.value})")
+
+    if dependencies["blocks"]:
+        lines.append("\n[bold]Blocks:[/bold]")
+        for blocked in dependencies["blocks"]:
+            status_color = "green" if blocked.status.value == "completed" else "red"
+            lines.append(f"  ← [{status_color}]{blocked.title}[/{status_color}] ({blocked.status.value})")
+
+    if dependencies["subtasks"]:
+        lines.append(f"\n[bold]Subtasks ({len(dependencies['subtasks'])}):[/bold]")
+        for subtask in dependencies["subtasks"]:
+            status_icon = "✅" if subtask.status.value == "completed" else "⏳" if subtask.status.value == "in_progress" else "⏸️"
+            lines.append(f"  {status_icon} {subtask.title}")
+
+    if dependencies["parent"]:
+        parent = dependencies["parent"]
+        lines.append(f"\n[bold]Parent Task:[/bold]\n  ↑ {parent.title} ({parent.status.value})")
+
+    if lines:
+        content = "\n".join(lines)
+        panel = Panel(content, title=f"Dependencies: {task.title}", border_style="cyan")
+        display.console.print(panel)

@@ -3,7 +3,7 @@
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Last Updated**: 2026-01-16
-**Current Phase**: Phase 2.7 (API Rate Limit Handling - Completed)
+**Current Phase**: Phase 3 (Task Hierarchy & Dependencies - Completed)
 
 ---
 
@@ -1227,29 +1227,132 @@ llm:
 
 **Completion**: 100%
 
-### Phase 3: Task Hierarchy & Dependencies ⏳ NOT STARTED
+### Phase 3: Task Hierarchy & Dependencies ✅ COMPLETED
 
-**Goal**: Support complex multi-step workflows with task decomposition.
+**Goal**: Support complex multi-step workflows with task decomposition and dependency management.
 
 **Checklist**:
-- [ ] Task hierarchy
-  - [ ] Parent-child relationships
-  - [ ] Subtask creation API
-  - [ ] Automatic subtask execution
-- [ ] Task dependencies
-  - [ ] `depends_on` and `blocks` relationships
-  - [ ] Dependency resolution algorithm
-  - [ ] Cycle detection
-- [ ] Smart task scheduling
-  - [ ] Execute tasks in dependency order
-  - [ ] Parallel execution of independent tasks
-  - [ ] Progress tracking across hierarchy
-- [ ] Task decomposition skill
-  - [ ] LLM analyzes complex tasks
-  - [ ] Automatically creates subtasks
-  - [ ] Sets appropriate dependencies
+- ✅ Task hierarchy
+  - ✅ Parent-child relationships
+  - ✅ Subtask creation API (`create_subtask()`)
+  - ✅ Automatic subtask execution order
+  - ✅ Depth limiting (max 5 levels)
+- ✅ Task dependencies
+  - ✅ `depends_on` and `blocks` relationships
+  - ✅ Dependency resolution algorithm (topological sort using Kahn's algorithm)
+  - ✅ Cycle detection using DFS
+  - ✅ Auto-blocking when dependencies not met
+- ✅ Smart task scheduling
+  - ✅ Execute tasks in dependency order
+  - ✅ Priority-based selection (CRITICAL > HIGH > MEDIUM > LOW)
+  - ✅ Progress tracking across hierarchy
+  - ✅ Automatic parent completion when all subtasks done
+- ✅ Task decomposition tool
+  - ✅ Agent can create subtasks during execution
+  - ✅ Agent can add/remove dependencies
+  - ✅ Agent can query task relationships
+  - ✅ Display hierarchy in terminal
 
-**Estimated Effort**: 3-4 days
+**Implemented Files**:
+- `src/orchestrator/tasks/manager.py` - Added hierarchy and dependency APIs
+  - `create_subtask()` - Create child tasks under parent
+  - `add_dependency()` / `remove_dependency()` - Manage dependencies
+  - `get_dependencies()` - Query task relationships
+  - `_has_dependency_cycle()` - Cycle detection with DFS
+  - `get_execution_order()` - Topological sort
+  - `get_next_executable_task()` - Smart scheduler with dependency checks
+- `src/orchestrator/tools/builtin/task_decompose.py` - New tool for Agent
+  - Operations: `create_subtask`, `add_dependency`, `remove_dependency`, `list_subtasks`, `get_task_info`
+- `src/orchestrator/tools/registry.py` - Registered TaskDecomposeTool
+- `src/orchestrator/core/orchestrator.py` - Integration
+  - Updated system prompt with task decomposition guidance
+  - Tool injection for TaskDecomposeTool
+  - `_handle_task_completion()` - Post-completion processing
+  - `_unblock_dependent_tasks()` - Unblock blocked tasks
+  - `_check_parent_completion()` - Auto-complete parent tasks
+- `src/orchestrator/display.py` - Visualization functions
+  - `show_task_hierarchy()` - ASCII tree display
+  - `show_dependency_info()` - Dependency relationships panel
+- `config/default.yaml` - Phase 3 configuration
+
+**Key Algorithms**:
+
+1. **Cycle Detection (DFS)**:
+   ```python
+   def _has_dependency_cycle(task_id, new_dependency_id):
+       # Check if adding task_id -> new_dependency_id creates cycle
+       # Use DFS from new_dependency_id to find path back to task_id
+       # If path exists, cycle would be created
+   ```
+
+2. **Topological Sort (Kahn's Algorithm)**:
+   ```python
+   def get_execution_order(task_ids):
+       # Build in-degree map (count of dependencies)
+       # Start with tasks having zero dependencies
+       # Process tasks and reduce in-degree of blocked tasks
+       # Return sorted list in dependency-safe order
+   ```
+
+3. **Smart Scheduler**:
+   ```python
+   def get_next_executable_task():
+       # Task is executable if:
+       # 1. Status is PENDING
+       # 2. All dependencies are COMPLETED
+       # 3. All subtasks are COMPLETED (if any)
+       # 4. Parent is IN_PROGRESS (if has parent)
+       # Sort by priority and return highest
+   ```
+
+**Configuration**:
+```yaml
+tasks:
+  max_depth: 5  # Maximum nesting depth
+  max_subtasks_per_task: 20  # Limit subtasks
+  auto_block_on_dependency: true  # Auto-block if deps not met
+
+tools:
+  task_decompose:
+    enabled: true
+    requires_approval: false
+```
+
+**Usage Example**:
+```python
+# Agent uses task_decompose tool to break down complex task
+{
+  "operation": "create_subtask",
+  "title": "Design database schema",
+  "description": "Design tables for user management",
+  "priority": "high"
+}
+
+# Add dependency (subtask B depends on subtask A)
+{
+  "operation": "add_dependency",
+  "task_id": "subtask_b_id",
+  "depends_on_task_id": "subtask_a_id"
+}
+
+# List all subtasks
+{
+  "operation": "list_subtasks"
+}
+```
+
+**Benefits**:
+1. **Structured Execution**: Tasks execute in correct dependency order
+2. **Safety**: Cycle detection prevents deadlocks
+3. **Automatic Management**: Parent tasks auto-complete when subtasks finish
+4. **Progress Visibility**: Hierarchy displayed in terminal with status icons
+5. **Flexibility**: Agent can decompose tasks dynamically during execution
+
+**Impact**: Enables Agent to handle complex multi-step workflows with proper sequencing and tracking.
+
+**Priority**: HIGH - Core feature for production use
+
+**Completion**: 100%
 
 ### Phase 4: Subagents & Skill Registry ⏳ NOT STARTED
 

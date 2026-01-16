@@ -195,6 +195,9 @@ class Orchestrator:
             # Trigger task.completed event
             await self._trigger_hook("task.completed", {"task": task, "result": result})
 
+            # Phase 3: Handle task completion for dependencies and hierarchy
+            await self._handle_task_completion(task.id)
+
             logger.info(f"Task completed: {task.id}")
 
         except Exception as e:
@@ -358,7 +361,8 @@ class Orchestrator:
             System prompt string
         """
         # For Anthropic, tools are passed via API parameter, not in system prompt
-        prompt = """You are an AI assistant helping with task execution.
+        max_iterations = self.config.get("orchestrator", {}).get("max_iterations", 20)
+        prompt = f"""You are an AI assistant helping with task execution.
 
 You have access to tools that will be provided via the API. Use them as needed to complete tasks.
 
@@ -370,8 +374,39 @@ For complex multi-step tasks, use the 'todo_list' tool to track your progress:
 4. Mark steps as 'completed' when done
 5. Use 'list' operation to review progress
 
-This helps you maintain context across reasoning iterations (max 20 iterations).
+This helps you maintain context across reasoning iterations (max {max_iterations} iterations).
 Without a TODO list, you may lose track of progress in long-running tasks.
+
+IMPORTANT - Task Decomposition:
+For very complex multi-step tasks that require structured execution order, use the 'task_decompose' tool:
+1. Analyze the task and identify logical subtasks
+2. Use 'create_subtask' operation to break down the work
+3. Use 'add_dependency' to set execution order between subtasks (optional)
+4. Subtasks will execute automatically before the parent task completes
+
+Example - Create subtask:
+{{
+  "operation": "create_subtask",
+  "title": "Design database schema",
+  "description": "Design tables and relationships for user management",
+  "priority": "high"
+}}
+
+Example - Add dependency (subtask B depends on subtask A):
+{{
+  "operation": "add_dependency",
+  "task_id": "subtask_b_id",
+  "depends_on_task_id": "subtask_a_id"
+}}
+
+Example - List all subtasks:
+{{
+  "operation": "list_subtasks"
+}}
+
+When to use task_decompose vs todo_list:
+- Use 'task_decompose' when subtasks need to be tracked separately, have dependencies, or could fail independently
+- Use 'todo_list' for tracking progress within a single task execution
 
 When the task is complete, provide a clear summary of what was accomplished.
 
@@ -432,6 +467,13 @@ If you need more information from the user, ask clearly and specifically."""
         if tool_name == "todo_list" and hasattr(tool, "set_current_task"):
             tool.set_current_task(self.current_task)
 
+        # Inject current task and task manager into TaskDecomposeTool (Phase 3)
+        if tool_name == "task_decompose":
+            if hasattr(tool, "set_current_task"):
+                tool.set_current_task(self.current_task)
+            if hasattr(tool, "set_task_manager"):
+                tool.set_task_manager(self.task_manager)
+
         # Execute tool
         result = await tool.execute(**tool_args)
         logger.info(f"Tool result: {result.success}")
@@ -462,3 +504,102 @@ If you need more information from the user, ask clearly and specifically."""
             return HookResult(action="continue")
 
         return await self.hook_engine.trigger(event, data, orchestrator_state=self, metadata=metadata)
+
+    async def _handle_task_completion(self, completed_task_id: str) -> None:
+        """
+        Handle task completion for Phase 3 hierarchy and dependencies.
+
+        After a task completes:
+        1. Unblock tasks that were waiting on this task
+        2. Check if parent task can be marked as completed
+
+        Args:
+            completed_task_id: ID of the task that just completed
+        """
+        # Unblock dependent tasks
+        await self._unblock_dependent_tasks(completed_task_id)
+
+        # Check parent completion
+        completed_task = await self.task_manager.get_task(completed_task_id)
+        if completed_task and completed_task.parent_id:
+            await self._check_parent_completion(completed_task.parent_id)
+
+    async def _unblock_dependent_tasks(self, completed_task_id: str) -> None:
+        """
+        Check and unblock tasks that were waiting on the completed task.
+
+        Args:
+            completed_task_id: ID of the completed task
+        """
+        completed_task = await self.task_manager.get_task(completed_task_id)
+        if not completed_task:
+            return
+
+        # Get all tasks blocked by this task
+        for blocked_task_id in completed_task.blocks:
+            blocked_task = await self.task_manager.get_task(blocked_task_id)
+            if not blocked_task or blocked_task.status != TaskStatus.BLOCKED:
+                continue
+
+            # Check if all dependencies are now completed
+            all_deps_completed = True
+            for dep_id in blocked_task.depends_on:
+                dep_task = await self.task_manager.get_task(dep_id)
+                if not dep_task or dep_task.status != TaskStatus.COMPLETED:
+                    all_deps_completed = False
+                    break
+
+            # Unblock task if all dependencies are satisfied
+            if all_deps_completed:
+                await self.task_manager.update_task(
+                    blocked_task_id, {"status": TaskStatus.PENDING}
+                )
+                logger.info(
+                    f"Unblocked task {blocked_task_id} (all dependencies completed)"
+                )
+
+    async def _check_parent_completion(self, parent_id: str) -> None:
+        """
+        Check if parent task can be marked as completed.
+
+        A parent task is automatically completed if all its subtasks are completed.
+
+        Args:
+            parent_id: ID of the parent task to check
+        """
+        parent = await self.task_manager.get_task(parent_id)
+        if not parent:
+            return
+
+        # Only auto-complete if parent is IN_PROGRESS
+        if parent.status != TaskStatus.IN_PROGRESS:
+            return
+
+        # Check if all subtasks are completed
+        all_subtasks_completed = True
+        for subtask_id in parent.subtasks:
+            subtask = await self.task_manager.get_task(subtask_id)
+            if not subtask or subtask.status != TaskStatus.COMPLETED:
+                all_subtasks_completed = False
+                break
+
+        # Auto-complete parent if all subtasks are done
+        if all_subtasks_completed and parent.subtasks:
+            await self.task_manager.update_task(
+                parent_id,
+                {
+                    "status": TaskStatus.COMPLETED,
+                    "result": f"All {len(parent.subtasks)} subtasks completed successfully",
+                },
+            )
+            logger.info(f"Auto-completed parent task {parent_id} (all subtasks done)")
+
+            # Trigger completion event
+            await self._trigger_hook(
+                "task.completed",
+                {"task": parent, "result": "All subtasks completed"},
+            )
+
+            # Recursively check grandparent
+            if parent.parent_id:
+                await self._check_parent_completion(parent.parent_id)
