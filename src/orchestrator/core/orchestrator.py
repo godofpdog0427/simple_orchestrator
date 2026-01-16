@@ -149,10 +149,13 @@ class Orchestrator:
 
         if use_live_display:
             from orchestrator.display_live import LiveDisplayManager
+            from orchestrator.display import set_display_manager
             self.display_manager = LiveDisplayManager()
+            set_display_manager(self.display_manager)  # Set as global for hooks
         else:
-            from orchestrator.display import DisplayManager
+            from orchestrator.display import DisplayManager, set_display_manager
             self.display_manager = DisplayManager()
+            set_display_manager(self.display_manager)
 
         # Initialize hook engine first
         hook_config = self.config.get("hooks", {})

@@ -39,6 +39,10 @@ class DisplayHook(Hook):
 
         self.display = get_display_manager()
 
+        # Check if using LiveDisplayManager (Phase 5B)
+        # When live display is active, skip panel-based displays to avoid interference
+        self.is_live_display = hasattr(self.display, 'start_live')
+
     async def execute(self, context: HookContext) -> HookResult:
         """
         Display event information.
@@ -87,6 +91,10 @@ class DisplayHook(Hook):
 
     def _display_task_start(self, data: dict[str, Any]) -> None:
         """Display task start."""
+        # Skip if using live display (handled in reasoning loop)
+        if self.is_live_display:
+            return
+
         task = data.get("task")
         if task and hasattr(task, "title"):
             description = getattr(task, "description", None)
@@ -94,6 +102,10 @@ class DisplayHook(Hook):
 
     def _display_task_complete(self, data: dict[str, Any]) -> None:
         """Display task completion."""
+        # Skip if using live display (handled in reasoning loop)
+        if self.is_live_display:
+            return
+
         task = data.get("task")
         result = data.get("result")
 
@@ -102,6 +114,10 @@ class DisplayHook(Hook):
 
     def _display_task_failed(self, data: dict[str, Any]) -> None:
         """Display task failure."""
+        # Skip if using live display (handled in reasoning loop)
+        if self.is_live_display:
+            return
+
         task = data.get("task")
         error = data.get("error", "Unknown error")
 
@@ -110,7 +126,8 @@ class DisplayHook(Hook):
 
     def _display_iteration(self, metadata: dict[str, Any]) -> None:
         """Display reasoning iteration number."""
-        if not self.show_iterations:
+        # Skip if using live display (shown in layout)
+        if self.is_live_display or not self.show_iterations:
             return
 
         current = metadata.get("iteration", 0)
@@ -121,7 +138,8 @@ class DisplayHook(Hook):
 
     def _display_reasoning(self, data: dict[str, Any]) -> None:
         """Display LLM reasoning text."""
-        if not self.show_reasoning:
+        # Skip if using live display (streamed in real-time)
+        if self.is_live_display or not self.show_reasoning:
             return
 
         # Extract reasoning text from response
@@ -131,7 +149,8 @@ class DisplayHook(Hook):
 
     def _display_tool_execution(self, data: dict[str, Any]) -> None:
         """Display tool execution start."""
-        if not self.show_tools:
+        # Skip if using live display (handled in reasoning loop)
+        if self.is_live_display or not self.show_tools:
             return
 
         tool_name = data.get("tool_name", "unknown")
@@ -141,10 +160,13 @@ class DisplayHook(Hook):
 
     def _display_tool_result(self, data: dict[str, Any]) -> None:
         """Display tool execution result."""
+        # Don't skip TODO list display even in live mode (it updates the TODO zone)
+        # Skip other tool results if using live display
+        tool_name = data.get("tool_name", "unknown")
+
         if not self.show_tools:
             return
 
-        tool_name = data.get("tool_name", "unknown")
         success = data.get("success", False)
         result = data.get("result")
 
@@ -174,8 +196,13 @@ class DisplayHook(Hook):
                             )
                         )
                 if todo_items:
+                    # Update TODO zone (works for both DisplayManager and LiveDisplayManager)
                     self.display.show_todo_status(todo_items)
                     return  # Don't show regular tool result for todo_list
+
+        # Skip regular tool results if using live display (handled in reasoning loop)
+        if self.is_live_display:
+            return
 
         # Show regular tool result
         self.display.show_tool_result(tool_name, success, result_data, error)
