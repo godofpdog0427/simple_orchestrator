@@ -11,6 +11,18 @@ llm:
     temperature: 0.7
     api_key_env: "ANTHROPIC_API_KEY"
 
+    # Retry configuration for rate limit (429) errors
+    retry:
+      max_retries: 5  # Maximum number of retry attempts
+      base_delay: 2.0  # Initial delay in seconds
+      max_delay: 60.0  # Maximum delay between retries
+      exponential_base: 2.0  # Multiplier for exponential backoff
+
+    # Request throttling (optional, disabled by default)
+    throttle:
+      enabled: false  # Enable to prevent rapid consecutive requests
+      min_request_interval: 0.5  # Minimum seconds between requests
+
 hooks:
   enabled: true
   directories:

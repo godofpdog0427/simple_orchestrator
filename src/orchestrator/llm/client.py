@@ -1,7 +1,9 @@
 """LLM client abstraction."""
 
+import asyncio
 import logging
 import os
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -55,6 +57,19 @@ class AnthropicProvider(LLMProvider):
         self.max_tokens = config.get("max_tokens", 4096)
         self.temperature = config.get("temperature", 0.7)
 
+        # Retry configuration
+        retry_config = config.get("retry", {})
+        self.max_retries = retry_config.get("max_retries", 5)
+        self.base_delay = retry_config.get("base_delay", 2.0)
+        self.max_delay = retry_config.get("max_delay", 60.0)
+        self.exponential_base = retry_config.get("exponential_base", 2.0)
+
+        # Throttle configuration
+        throttle_config = config.get("throttle", {})
+        self.throttle_enabled = throttle_config.get("enabled", False)
+        self.min_request_interval = throttle_config.get("min_request_interval", 0.5)
+        self.last_request_time = 0.0
+
         # Get API key
         api_key_env = config.get("api_key_env", "ANTHROPIC_API_KEY")
         self.api_key = os.getenv(api_key_env)
@@ -73,12 +88,28 @@ class AnthropicProvider(LLMProvider):
             )
 
         logger.info(f"Initialized Anthropic provider with model: {self.model}")
+        logger.info(f"Retry config: max_retries={self.max_retries}, base_delay={self.base_delay}s")
+
+    async def _apply_throttle(self) -> None:
+        """Apply request throttling if enabled."""
+        if not self.throttle_enabled:
+            return
+
+        current_time = time.time()
+        time_since_last_request = current_time - self.last_request_time
+
+        if time_since_last_request < self.min_request_interval:
+            sleep_time = self.min_request_interval - time_since_last_request
+            logger.debug(f"Throttling: sleeping for {sleep_time:.2f}s")
+            await asyncio.sleep(sleep_time)
+
+        self.last_request_time = time.time()
 
     async def chat(
         self, messages: list[dict], tools: Optional[list[dict]] = None
     ) -> LLMResponse:
         """
-        Send chat request to Anthropic API.
+        Send chat request to Anthropic API with retry logic.
 
         Args:
             messages: List of message dicts with role and content
@@ -86,7 +117,13 @@ class AnthropicProvider(LLMProvider):
 
         Returns:
             LLMResponse object
+
+        Raises:
+            Exception: If all retries are exhausted
         """
+        # Apply throttling if enabled
+        await self._apply_throttle()
+
         # Separate system message from conversation
         system_message = None
         conversation_messages = []
@@ -113,24 +150,91 @@ class AnthropicProvider(LLMProvider):
 
         logger.debug(f"Calling Anthropic API with {len(conversation_messages)} messages")
 
+        # Retry loop with exponential backoff
+        last_exception = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = await self.client.messages.create(**params)
+
+                # Convert to LLMResponse
+                return LLMResponse(
+                    content=response.content,
+                    stop_reason=response.stop_reason,
+                    usage={
+                        "input_tokens": response.usage.input_tokens,
+                        "output_tokens": response.usage.output_tokens,
+                    },
+                    model=response.model,
+                    raw_response=response,
+                )
+
+            except Exception as e:
+                last_exception = e
+
+                # Check if it's a rate limit error (429)
+                is_rate_limit = self._is_rate_limit_error(e)
+
+                if is_rate_limit and attempt < self.max_retries:
+                    # Calculate retry delay with exponential backoff
+                    delay = min(
+                        self.base_delay * (self.exponential_base**attempt), self.max_delay
+                    )
+
+                    # Check for retry-after header
+                    retry_after = self._get_retry_after(e)
+                    if retry_after:
+                        delay = min(retry_after, self.max_delay)
+
+                    logger.warning(
+                        f"Rate limit error (429) on attempt {attempt + 1}/{self.max_retries + 1}. "
+                        f"Retrying in {delay:.1f}s... "
+                        f"(Tip: Check your usage tier at https://console.anthropic.com/settings/limits)"
+                    )
+
+                    await asyncio.sleep(delay)
+                    continue
+
+                # Not a rate limit error, or out of retries
+                if is_rate_limit:
+                    logger.error(
+                        f"Rate limit error persisted after {self.max_retries} retries. "
+                        f"Your API usage tier may be too low. "
+                        f"Check https://console.anthropic.com/settings/limits"
+                    )
+                else:
+                    logger.error(f"Error calling Anthropic API: {e}", exc_info=True)
+
+                raise
+
+        # Should never reach here, but just in case
+        raise last_exception
+
+    def _is_rate_limit_error(self, error: Exception) -> bool:
+        """Check if error is a rate limit (429) error."""
+        # Check for anthropic.RateLimitError
+        error_type = type(error).__name__
+        if "RateLimitError" in error_type:
+            return True
+
+        # Check error message for 429
+        error_str = str(error).lower()
+        if "429" in error_str or "rate limit" in error_str or "too many requests" in error_str:
+            return True
+
+        return False
+
+    def _get_retry_after(self, error: Exception) -> Optional[float]:
+        """Extract retry-after value from error if available."""
         try:
-            response = await self.client.messages.create(**params)
+            # Try to get retry_after from error object
+            if hasattr(error, "response") and hasattr(error.response, "headers"):
+                retry_after = error.response.headers.get("retry-after")
+                if retry_after:
+                    return float(retry_after)
+        except (AttributeError, ValueError, TypeError):
+            pass
 
-            # Convert to LLMResponse
-            return LLMResponse(
-                content=response.content,
-                stop_reason=response.stop_reason,
-                usage={
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                },
-                model=response.model,
-                raw_response=response,
-            )
-
-        except Exception as e:
-            logger.error(f"Error calling Anthropic API: {e}", exc_info=True)
-            raise
+        return None
 
 
 class LLMClient:

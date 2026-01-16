@@ -3,7 +3,7 @@
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Last Updated**: 2026-01-16
-**Current Phase**: Phase 2.6 (Rich CLI Display - Completed)
+**Current Phase**: Phase 2.7 (API Rate Limit Handling - Completed)
 
 ---
 
@@ -1166,6 +1166,67 @@ class TaskValidationError(FatalError):
 
 **Completion**: 100%
 
+### Phase 2.7: API Rate Limit Handling (Hotfix) ✅ COMPLETED
+
+**Reason for Insertion**: Users frequently encounter 429 "Too Many Requests" errors causing task failures.
+
+**Problem**:
+1. No retry mechanism for rate limit (429) errors
+2. Tasks fail immediately when hitting rate limits
+3. Rapid consecutive LLM calls in ReAct loop (up to 20 iterations) quickly exhaust rate limits
+4. No helpful error messages explaining the issue or solution
+
+**Solution**: Implement automatic retry with exponential backoff for 429 errors.
+
+**Checklist**:
+- ✅ Add retry configuration to config/default.yaml
+- ✅ Implement exponential backoff in AnthropicProvider.chat()
+- ✅ Detect rate limit errors (anthropic.RateLimitError, 429 in message)
+- ✅ Read retry-after header from response if available
+- ✅ Add optional request throttling to prevent rapid requests
+- ✅ Improve error messages with actionable guidance
+- ✅ Update CLAUDE.md troubleshooting section
+
+**Implemented Files**:
+- `config/default.yaml` - Retry and throttle configuration
+- `src/orchestrator/llm/client.py` - Retry logic with exponential backoff
+- `CLAUDE.md` - Comprehensive troubleshooting guide for 429 errors
+
+**Configuration**:
+```yaml
+llm:
+  anthropic:
+    retry:
+      max_retries: 5  # Retry up to 5 times
+      base_delay: 2.0  # Start with 2s delay
+      max_delay: 60.0  # Cap at 60s
+      exponential_base: 2.0  # Double delay each retry
+    throttle:
+      enabled: false  # Optional feature
+      min_request_interval: 0.5  # Min seconds between requests
+```
+
+**Retry Behavior**:
+- Attempt 1: Wait 2s, retry
+- Attempt 2: Wait 4s, retry
+- Attempt 3: Wait 8s, retry
+- Attempt 4: Wait 16s, retry
+- Attempt 5: Wait 32s, retry
+- After 5 retries: Fail with helpful error message
+
+**Key Features**:
+- **Automatic Recovery**: Tasks automatically recover from temporary rate limit errors
+- **Exponential Backoff**: Progressively longer waits reduce API pressure
+- **Retry-After Support**: Respects API's suggested retry timing if provided
+- **Helpful Errors**: Clear guidance on checking usage tier and rate limits
+- **Optional Throttling**: Prevent rapid consecutive requests if enabled
+
+**Impact**: Dramatically improves reliability - tasks no longer fail due to temporary rate limits. Critical for low-tier accounts.
+
+**Priority**: HIGH - Directly affects task completion rate and user experience
+
+**Completion**: 100%
+
 ### Phase 3: Task Hierarchy & Dependencies ⏳ NOT STARTED
 
 **Goal**: Support complex multi-step workflows with task decomposition.
@@ -1616,6 +1677,84 @@ Optional:
 ---
 
 ## Troubleshooting
+
+### Rate Limit Errors (429 Too Many Requests)
+
+**Symptom**: `HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 429 Too Many Requests"`
+
+**What This Means**:
+You've exceeded Anthropic's API rate limits. Rate limits are measured in:
+- **RPM (Requests Per Minute)** - Number of API calls per minute
+- **ITPM (Input Tokens Per Minute)** - Input tokens consumed per minute
+- **OTPM (Output Tokens Per Minute)** - Output tokens generated per minute
+
+**Why It Happens**:
+1. **Low Usage Tier**: New accounts start at Tier 1 with very restrictive limits
+2. **Rapid Requests**: ReAct loop makes multiple LLM calls in quick succession (up to 20 iterations)
+3. **Large Context**: High token usage in complex tasks
+
+**Solution (Automatic)**:
+As of Phase 2.7, the orchestrator **automatically retries** with exponential backoff:
+- Attempt 1: Wait 2 seconds, retry
+- Attempt 2: Wait 4 seconds, retry
+- Attempt 3: Wait 8 seconds, retry
+- Attempt 4: Wait 16 seconds, retry
+- Attempt 5: Wait 32 seconds, retry
+- After 5 retries: Task fails with clear error message
+
+**Manual Solutions**:
+
+1. **Check Your Usage Tier**:
+   - Visit https://console.anthropic.com/settings/limits
+   - Higher tiers have much higher rate limits
+   - Tier automatically increases as you use more API credits
+
+2. **Enable Request Throttling** (optional):
+   ```yaml
+   # config/default.yaml or config/local.yaml
+   llm:
+     anthropic:
+       throttle:
+         enabled: true  # Prevents rapid consecutive requests
+         min_request_interval: 0.5  # Wait 0.5s between requests
+   ```
+
+3. **Adjust Retry Settings** (if needed):
+   ```yaml
+   llm:
+     anthropic:
+       retry:
+         max_retries: 10  # More retries for low-tier accounts
+         base_delay: 3.0  # Longer initial wait
+         max_delay: 120.0  # Allow up to 2 minutes between retries
+   ```
+
+4. **Reduce Task Complexity**:
+   - Break large tasks into smaller subtasks
+   - Use simpler prompts to reduce iterations
+   - Lower `orchestrator.max_iterations` from 20 to 10
+
+**Understanding Usage Tiers**:
+- **Tier 1** (New accounts): Very low limits (e.g., 5 RPM, 20K ITPM)
+- **Tier 2**: Requires $5 cumulative spend
+- **Tier 3**: Requires $50 cumulative spend
+- **Tier 4**: Requires $500 cumulative spend
+
+Each tier dramatically increases rate limits. See: https://docs.anthropic.com/en/api/rate-limits
+
+**Debug Logs**:
+When 429 occurs, you'll see:
+```
+WARNING - Rate limit error (429) on attempt 1/6. Retrying in 2.0s...
+(Tip: Check your usage tier at https://console.anthropic.com/settings/limits)
+```
+
+If all retries fail:
+```
+ERROR - Rate limit error persisted after 5 retries.
+Your API usage tier may be too low.
+Check https://console.anthropic.com/settings/limits
+```
 
 ### API Key Not Found
 

@@ -62,3 +62,41 @@
 ---
 
 *分析完成時間: 2025年1月15日*
+
+---
+
+# 項目 Python 檔案 Class 分析結果 (排除虛擬環境)
+
+## 包含最多 Class 的檔案
+
+**檔案名稱**: ./src/orchestrator/tasks/models.py
+
+**Class 數量**: 6
+
+## 統計摘要
+
+- 分析了項目中的 **26** 個 Python 檔案（排除虛擬環境）
+- 包含最多 class 的檔案有 **6** 個 class
+
+## 所有包含 Class 的檔案列表
+
+1. **./src/orchestrator/tasks/models.py**: 6 classes
+2. **./src/orchestrator/tools/base.py**: 5 classes  
+3. **./src/orchestrator/hooks/base.py**: 4 classes
+4. **./src/orchestrator/llm/client.py**: 4 classes
+5. **./src/orchestrator/hooks/builtin/logging.py**: 3 classes
+6. **./src/orchestrator/tools/builtin/file_ops.py**: 3 classes
+7. **./src/orchestrator/display.py**: 1 classes
+8. **./src/orchestrator/tasks/manager.py**: 1 classes
+9. **./src/orchestrator/hooks/engine.py**: 1 classes
+10. **./src/orchestrator/hooks/builtin/hitl.py**: 1 classes
+11. **./src/orchestrator/hooks/builtin/metrics.py**: 1 classes
+12. **./src/orchestrator/hooks/builtin/display.py**: 1 classes
+13. **./src/orchestrator/core/orchestrator.py**: 1 classes
+14. **./src/orchestrator/tools/registry.py**: 1 classes
+15. **./src/orchestrator/tools/builtin/todo.py**: 1 classes
+16. **./src/orchestrator/tools/builtin/bash.py**: 1 classes
+
+---
+
+*項目 Class 分析完成時間: 2025年1月16日*
