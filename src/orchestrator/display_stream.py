@@ -1,13 +1,9 @@
-"""Streaming display manager with fixed TODO at top (Claude Code-like)."""
+"""Minimal streaming display manager - pure text output, no Live, no Panel."""
 
-import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from rich.console import Console
-from rich.live import Live
-from rich.panel import Panel
-from rich.text import Text
 
 from orchestrator.tasks.models import TodoItem
 
@@ -16,31 +12,26 @@ logger = logging.getLogger(__name__)
 
 class StreamingDisplayManager:
     """
-    Display manager with Claude Code-like behavior:
-    - Top: Fixed TODO panel (Live updates)
-    - Middle: Streaming output (Rich console prints, natural scroll)
-    - Bottom: Input prompt (handled by CLI)
+    極簡串流輸出 display manager。
 
-    Design:
-    - TODO zone uses Rich Live for in-place updates
-    - Output directly prints to console (append-only, no replacement)
-    - Compact single-line TODO format (max 5 items visible)
+    特點:
+    - 純文字輸出，無 Panel 框框
+    - 無 Live display，無固定區域
+    - TODO 只在更新時印一行
+    - 內容持續向下滾動
     """
 
     def __init__(self, console: Console | None = None):
         """
-        Initialize streaming display manager.
+        Initialize minimal streaming display manager.
 
         Args:
             console: Rich Console instance (creates new if None)
         """
         self.console = console or Console()
-        self._is_streaming = False
         self._enabled = True
-
-        # TODO zone state (top, fixed)
         self._current_todos: list[TodoItem] = []
-        self._todo_live: Optional[Live] = None
+        self._last_todo_output = ""  # Track last TODO line to avoid spam
 
     def enable(self) -> None:
         """Enable display output."""
@@ -54,150 +45,44 @@ class StreamingDisplayManager:
         """Check if display is enabled."""
         return self._enabled
 
-    def start_streaming(self) -> None:
-        """Start streaming mode with live TODO zone at top."""
-        if self._is_streaming:
-            return
-
-        self._is_streaming = True
-        self._start_todo_live_display()
-        logger.info("Streaming display started")
-
-    def stop_streaming(self) -> None:
-        """Stop streaming mode and clean up."""
-        if not self._is_streaming:
-            return
-
-        self._is_streaming = False
-        self._stop_todo_live_display()
-        logger.info("Streaming display stopped")
-
-    def _start_todo_live_display(self) -> None:
-        """Start Live display for TODO zone at top of terminal."""
-        if self._todo_live:
-            return  # Already started
-
-        try:
-            self._todo_live = Live(
-                self._render_todo_panel(),
-                console=self.console,
-                refresh_per_second=4,
-                vertical_overflow="visible",  # Allow content below to scroll
-                transient=False,  # Keep TODO visible
-            )
-            self._todo_live.start()
-        except Exception as e:
-            logger.error(f"Failed to start TODO live display: {e}")
-            self._todo_live = None
-
-    def _stop_todo_live_display(self) -> None:
-        """Stop Live display for TODO zone."""
-        if self._todo_live:
-            try:
-                self._todo_live.stop()
-            except Exception as e:
-                logger.error(f"Failed to stop TODO live display: {e}")
-            finally:
-                self._todo_live = None
-
-    def _render_todo_panel(self) -> Panel:
-        """
-        Render TODO list as compact panel for live display.
-
-        Returns:
-            Panel with TODO items in single-line format
-        """
-        if not self._current_todos:
-            return Panel(
-                Text("No active tasks", style="dim"),
-                title="📋 TODO Progress",
-                border_style="magenta",
-                height=3,
-            )
-
-        # Compact single-line format for TODO items (max 5 items)
-        todo_text = Text()
-        for i, todo in enumerate(self._current_todos[:5]):
-            if i > 0:
-                todo_text.append("  ")
-
-            # Status icon and styling
-            icon = self._get_status_icon(todo.status)
-            style = self._get_status_style(todo.status)
-
-            todo_text.append(f"{icon} ", style=style)
-
-            # Truncate long task names to 30 chars
-            content = todo.content[:30]
-            if len(todo.content) > 30:
-                content += "..."
-            todo_text.append(content, style="cyan")
-
-        # Show count if more than 5 items
-        if len(self._current_todos) > 5:
-            todo_text.append(f"  [dim](+{len(self._current_todos) - 5} more)[/dim]")
-
-        return Panel(
-            todo_text,
-            title="📋 TODO Progress",
-            border_style="magenta",
-            height=3,
-        )
-
-    def _get_status_icon(self, status: str) -> str:
-        """Get icon for TODO status."""
-        return {
-            "completed": "✅",
-            "in_progress": "⏳",
-            "pending": "⏸",
-        }.get(status, "❓")
-
-    def _get_status_style(self, status: str) -> str:
-        """Get Rich style for TODO status."""
-        return {
-            "completed": "green",
-            "in_progress": "yellow",
-            "pending": "dim",
-        }.get(status, "white")
+    # Core append methods (pure text output)
 
     def update_todo_list(self, todos: list[TodoItem]) -> None:
         """
-        Update TODO zone (live update at top).
+        只在 TODO 改變時印一行。
 
         Args:
             todos: List of TODO items
         """
-        if not self._enabled:
+        if not self._enabled or not todos:
             return
 
         self._current_todos = todos
 
-        # Update live display if active
-        if self._todo_live:
-            try:
-                self._todo_live.update(self._render_todo_panel())
-            except Exception as e:
-                logger.error(f"Failed to update TODO display: {e}")
+        # 格式化為單行
+        items = []
+        for todo in todos[:5]:  # Max 5 items
+            icon = {
+                "completed": "✅",
+                "in_progress": "⏳",
+                "pending": "⏸"
+            }.get(todo.status, "❓")
+            # Truncate long task names
+            content = todo.content[:20]
+            if len(todo.content) > 20:
+                content += "..."
+            items.append(f"{icon} {content}")
 
-    # Append-only methods (print directly to console, below TODO zone)
+        output = "TODO: " + "  ".join(items)
 
-    def append_iteration(self, current: int, maximum: int) -> None:
-        """
-        Print iteration counter.
-
-        Args:
-            current: Current iteration
-            maximum: Maximum iterations
-        """
-        if not self._enabled:
-            return
-
-        text = Text(f"── Iteration {current}/{maximum} ──", style="dim yellow")
-        self.console.print(text)
+        # 只在改變時才印
+        if output != self._last_todo_output:
+            self.console.print(output, style="dim magenta")
+            self._last_todo_output = output
 
     def append_thinking(self, text: str) -> None:
         """
-        Print thinking text in panel.
+        印思考文字（純文字，無框框）。
 
         Args:
             text: Reasoning text from LLM
@@ -205,17 +90,11 @@ class StreamingDisplayManager:
         if not self._enabled or not text.strip():
             return
 
-        panel = Panel(
-            Text(text, style="cyan"),
-            title="🤔 Thinking",
-            border_style="dim cyan",
-            padding=(0, 1),
-        )
-        self.console.print(panel)
+        self.console.print(f"💭 {text}", style="cyan")
 
     def append_tool_execution(self, tool_name: str, args: dict[str, Any]) -> None:
         """
-        Print tool execution start.
+        印工具執行開始。
 
         Args:
             tool_name: Name of the tool
@@ -224,17 +103,19 @@ class StreamingDisplayManager:
         if not self._enabled:
             return
 
-        args_str = self._format_args(args)
-        text = Text()
-        text.append("🔧 Tool: ", style="yellow")
-        text.append(tool_name, style="bold yellow")
-        if args_str:
-            text.append(f" ({args_str})", style="dim yellow")
-        self.console.print(text)
+        # Format first 2 args
+        args_str = ", ".join(
+            f"{k}={str(v)[:20]}"
+            for k, v in list(args.items())[:2]
+        )
+        if len(args) > 2:
+            args_str += "..."
+
+        self.console.print(f"🔧 {tool_name}({args_str})", style="yellow")
 
     def append_tool_result(self, tool_name: str, success: bool, data: Any = None, error: str | None = None) -> None:
         """
-        Print tool execution result.
+        印工具執行結果。
 
         Args:
             tool_name: Name of the tool
@@ -246,27 +127,16 @@ class StreamingDisplayManager:
             return
 
         if success:
-            title = f"✅ {tool_name} - Success"
-            border_style = "green"
-            content = str(data)[:500] if data else "[dim]No output[/dim]"
-            if data and len(str(data)) > 500:
-                content += "..."
+            result_str = str(data)[:100] if data else "OK"
+            if data and len(str(data)) > 100:
+                result_str += "..."
+            self.console.print(f"  ✅ {result_str}", style="green")
         else:
-            title = f"❌ {tool_name} - Failed"
-            border_style = "red"
-            content = error or "Unknown error"
-
-        panel = Panel(
-            content,
-            title=title,
-            border_style=border_style,
-            padding=(0, 1),
-        )
-        self.console.print(panel)
+            self.console.print(f"  ❌ {error or 'Unknown error'}", style="red")
 
     def append_task_start(self, task_title: str, task_description: str | None = None) -> None:
         """
-        Print task start.
+        印任務開始。
 
         Args:
             task_title: Task title
@@ -275,20 +145,13 @@ class StreamingDisplayManager:
         if not self._enabled:
             return
 
-        content = f"[bold]{task_title}[/bold]"
+        self.console.print(f"\n🚀 Starting Task: {task_title}", style="bold green")
         if task_description and task_description != task_title:
-            content += f"\n{task_description}"
-
-        panel = Panel(
-            content,
-            title="🚀 Starting Task",
-            border_style="green",
-        )
-        self.console.print(panel)
+            self.console.print(f"   {task_description}", style="dim")
 
     def append_task_complete(self, task_title: str, result: str | None = None) -> None:
         """
-        Print task completion.
+        印任務完成。
 
         Args:
             task_title: Task title
@@ -297,23 +160,16 @@ class StreamingDisplayManager:
         if not self._enabled:
             return
 
-        content = f"[bold]{task_title}[/bold]"
+        self.console.print(f"\n✅ Task Completed: {task_title}", style="bold green")
         if result:
-            result_str = str(result)
-            if len(result_str) > 500:
-                result_str = result_str[:497] + "..."
-            content += f"\n\n{result_str}"
-
-        panel = Panel(
-            content,
-            title="✅ Task Completed",
-            border_style="green",
-        )
-        self.console.print(panel)
+            result_str = str(result)[:200]
+            if len(str(result)) > 200:
+                result_str += "..."
+            self.console.print(f"   {result_str}", style="dim")
 
     def append_task_failed(self, task_title: str, error: str) -> None:
         """
-        Print task failure.
+        印任務失敗。
 
         Args:
             task_title: Task title
@@ -322,42 +178,21 @@ class StreamingDisplayManager:
         if not self._enabled:
             return
 
-        content = f"[bold]{task_title}[/bold]\n\n[red]Error: {error}[/red]"
+        self.console.print(f"\n❌ Task Failed: {task_title}", style="bold red")
+        self.console.print(f"   Error: {error}", style="red")
 
-        panel = Panel(
-            content,
-            title="❌ Task Failed",
-            border_style="red",
-        )
-        self.console.print(panel)
-
-    def _format_args(self, args: dict[str, Any]) -> str:
+    def append_iteration(self, current: int, maximum: int) -> None:
         """
-        Format tool arguments for compact display.
+        印迭代計數。
 
         Args:
-            args: Tool arguments
-
-        Returns:
-            Formatted string (truncated if too long)
+            current: Current iteration
+            maximum: Maximum iterations
         """
-        if not args:
-            return ""
+        if not self._enabled:
+            return
 
-        # Format as key=value pairs
-        parts = []
-        for key, value in args.items():
-            value_str = str(value)
-            # Truncate very long values
-            if len(value_str) > 40:
-                value_str = value_str[:37] + "..."
-            parts.append(f"{key}={value_str}")
-
-        result = ", ".join(parts)
-        # Truncate entire args string if too long
-        if len(result) > 100:
-            result = result[:97] + "..."
-        return result
+        self.console.print(f"[Iteration {current}/{maximum}]", style="dim")
 
     # Backward compatibility with DisplayManager interface
 
@@ -406,12 +241,12 @@ class StreamingDisplayManager:
             return
 
         percentage = int((current / total) * 100) if total > 0 else 0
-        bar_length = 30
+        bar_length = 20
         filled = int((current / total) * bar_length) if total > 0 else 0
         bar = "█" * filled + "░" * (bar_length - filled)
 
-        text = f"Progress: [{bar}] {percentage}% ({current}/{total})"
+        text = f"[{bar}] {percentage}% ({current}/{total})"
         if message:
-            text += f"\n{message}"
+            text += f" {message}"
 
-        self.console.print(f"[bold blue]{text}[/bold blue]")
+        self.console.print(text, style="blue")

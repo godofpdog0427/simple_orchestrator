@@ -166,7 +166,7 @@ class Orchestrator:
             if use_streaming:
                 from orchestrator.display_stream import StreamingDisplayManager
                 self.display_manager = StreamingDisplayManager()
-                self.display_manager.start_streaming()
+                # No need to call start_streaming() - pure output mode
                 logger.info("Created StreamingDisplayManager")
             elif use_live_display:
                 from orchestrator.display_live import LiveDisplayManager
