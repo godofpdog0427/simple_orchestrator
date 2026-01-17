@@ -39,9 +39,12 @@ class DisplayHook(Hook):
 
         self.display = get_display_manager()
 
-        # Check if using LiveDisplayManager (Phase 5B)
-        # When live display is active, skip panel-based displays to avoid interference
-        self.is_live_display = hasattr(self.display, 'start_live')
+        # Check display manager type
+        # StreamingDisplayManager: Use append_* methods for continuous output
+        # LiveDisplayManager: Skip most outputs (handled in zones)
+        # DisplayManager: Use show_* methods (panel-based)
+        self.is_streaming_display = hasattr(self.display, 'append_thinking')
+        self.is_live_display = hasattr(self.display, 'start_live') and not self.is_streaming_display
 
     async def execute(self, context: HookContext) -> HookResult:
         """
@@ -98,7 +101,11 @@ class DisplayHook(Hook):
         task = data.get("task")
         if task and hasattr(task, "title"):
             description = getattr(task, "description", None)
-            self.display.show_task_start(task.title, description)
+
+            if self.is_streaming_display:
+                self.display.append_task_start(task.title, description)
+            else:
+                self.display.show_task_start(task.title, description)
 
     def _display_task_complete(self, data: dict[str, Any]) -> None:
         """Display task completion."""
@@ -110,7 +117,10 @@ class DisplayHook(Hook):
         result = data.get("result")
 
         if task and hasattr(task, "title"):
-            self.display.show_task_complete(task.title, result)
+            if self.is_streaming_display:
+                self.display.append_task_complete(task.title, result)
+            else:
+                self.display.show_task_complete(task.title, result)
 
     def _display_task_failed(self, data: dict[str, Any]) -> None:
         """Display task failure."""
@@ -122,46 +132,65 @@ class DisplayHook(Hook):
         error = data.get("error", "Unknown error")
 
         if task and hasattr(task, "title"):
-            self.display.show_task_failed(task.title, str(error))
+            if self.is_streaming_display:
+                self.display.append_task_failed(task.title, str(error))
+            else:
+                self.display.show_task_failed(task.title, str(error))
 
     def _display_iteration(self, metadata: dict[str, Any]) -> None:
         """Display reasoning iteration number."""
+        if not self.show_iterations:
+            return
+
         # Skip if using live display (shown in layout)
-        if self.is_live_display or not self.show_iterations:
+        if self.is_live_display:
             return
 
         current = metadata.get("iteration", 0)
         maximum = metadata.get("max_iterations", 20)
 
         if current > 0:
-            self.display.show_iteration(current, maximum)
+            if self.is_streaming_display:
+                self.display.append_iteration(current, maximum)
+            else:
+                self.display.show_iteration(current, maximum)
 
     def _display_reasoning(self, data: dict[str, Any]) -> None:
         """Display LLM reasoning text."""
+        if not self.show_reasoning:
+            return
+
         # Skip if using live display (streamed in real-time)
-        if self.is_live_display or not self.show_reasoning:
+        if self.is_live_display:
             return
 
         # Extract reasoning text from response
         reasoning = data.get("reasoning_text")
         if reasoning:
-            self.display.show_thinking(reasoning)
+            if self.is_streaming_display:
+                self.display.append_thinking(reasoning)
+            else:
+                self.display.show_thinking(reasoning)
 
     def _display_tool_execution(self, data: dict[str, Any]) -> None:
         """Display tool execution start."""
+        if not self.show_tools:
+            return
+
         # Skip if using live display (handled in reasoning loop)
-        if self.is_live_display or not self.show_tools:
+        if self.is_live_display:
             return
 
         tool_name = data.get("tool_name", "unknown")
         tool_input = data.get("tool_input", {})
 
-        self.display.show_tool_execution(tool_name, tool_input)
+        if self.is_streaming_display:
+            self.display.append_tool_execution(tool_name, tool_input)
+        else:
+            self.display.show_tool_execution(tool_name, tool_input)
 
     def _display_tool_result(self, data: dict[str, Any]) -> None:
         """Display tool execution result."""
-        # Don't skip TODO list display even in live mode (it updates the TODO zone)
-        # Skip other tool results if using live display
         tool_name = data.get("tool_name", "unknown")
 
         if not self.show_tools:
@@ -179,6 +208,7 @@ class DisplayHook(Hook):
             error = getattr(result, "error", None)
 
         # Special handling for todo_list tool
+        # Update TODO zone for all display types (streaming, live, panel)
         if tool_name == "todo_list" and self.show_todos and success and result_data:
             todos = result_data.get("todos", [])
             if todos:
@@ -196,7 +226,7 @@ class DisplayHook(Hook):
                             )
                         )
                 if todo_items:
-                    # Update TODO zone (works for both DisplayManager and LiveDisplayManager)
+                    # Update TODO zone (works for all display managers)
                     self.display.show_todo_status(todo_items)
                     return  # Don't show regular tool result for todo_list
 
@@ -205,4 +235,7 @@ class DisplayHook(Hook):
             return
 
         # Show regular tool result
-        self.display.show_tool_result(tool_name, success, result_data, error)
+        if self.is_streaming_display:
+            self.display.append_tool_result(tool_name, success, result_data, error)
+        else:
+            self.display.show_tool_result(tool_name, success, result_data, error)

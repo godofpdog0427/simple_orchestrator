@@ -149,18 +149,34 @@ class Orchestrator:
         self.cache_manager = CacheManager(cache_config)
         set_cache_manager(self.cache_manager)  # Set global instance
 
-        # Initialize display manager (Phase 5B)
-        cli_config = self.config.get("cli", {})
-        use_live_display = cli_config.get("use_live_display", True)
+        # Initialize display manager (Phase 5B/5C)
+        # Priority: Streaming > Live > Panel
+        # If display manager is already set (e.g., by CLI), use that
+        from orchestrator.display import get_display_manager, set_display_manager
 
-        if use_live_display:
-            from orchestrator.display_live import LiveDisplayManager
-            from orchestrator.display import set_display_manager
-            self.display_manager = LiveDisplayManager()
-            set_display_manager(self.display_manager)  # Set as global for hooks
-        else:
-            from orchestrator.display import DisplayManager, set_display_manager
-            self.display_manager = DisplayManager()
+        try:
+            self.display_manager = get_display_manager()
+            logger.info(f"Using existing display manager: {type(self.display_manager).__name__}")
+        except Exception:
+            # No display manager set, create one based on config
+            cli_config = self.config.get("cli", {})
+            use_streaming = cli_config.get("use_streaming_display", False)
+            use_live_display = cli_config.get("use_live_display", False)
+
+            if use_streaming:
+                from orchestrator.display_stream import StreamingDisplayManager
+                self.display_manager = StreamingDisplayManager()
+                self.display_manager.start_streaming()
+                logger.info("Created StreamingDisplayManager")
+            elif use_live_display:
+                from orchestrator.display_live import LiveDisplayManager
+                self.display_manager = LiveDisplayManager()
+                logger.info("Created LiveDisplayManager")
+            else:
+                from orchestrator.display import DisplayManager
+                self.display_manager = DisplayManager()
+                logger.info("Created DisplayManager (panel mode)")
+
             set_display_manager(self.display_manager)
 
         # Initialize hook engine first

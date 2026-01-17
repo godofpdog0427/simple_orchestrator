@@ -49,6 +49,19 @@ async def _run_orchestrator(config: dict) -> None:
 async def _run_interactive(config: dict) -> None:
     """Run orchestrator in interactive chat mode."""
     from orchestrator.core.orchestrator import Orchestrator
+    from orchestrator.display_stream import StreamingDisplayManager
+    from orchestrator.display import set_display_manager
+    from prompt_toolkit.patch_stdout import patch_stdout
+
+    # Check if streaming display is enabled (default: true)
+    use_streaming = config.get("cli", {}).get("use_streaming_display", True)
+
+    # Initialize display manager
+    if use_streaming:
+        display = StreamingDisplayManager()
+        display.start_streaming()
+        set_display_manager(display)
+    # else: display manager will be initialized in orchestrator.initialize()
 
     console.print(Panel("Interactive Mode - Type 'exit' or 'quit' to stop", title="Orchestrator"))
 
@@ -62,29 +75,40 @@ async def _run_interactive(config: dict) -> None:
     session: PromptSession[str] = PromptSession(history=FileHistory(history_file))
 
     try:
-        while True:
-            try:
-                # Get user input
-                user_input = await session.prompt_async("orchestrator> ")
+        # Use patch_stdout to prevent prompt_toolkit from interfering with Rich output
+        with patch_stdout():
+            while True:
+                try:
+                    # Get user input (non-blocking async)
+                    user_input = await session.prompt_async(
+                        "orchestrator> ",
+                        patch_stdout=True
+                    )
 
-                if not user_input.strip():
+                    if not user_input.strip():
+                        continue
+
+                    if user_input.lower() in ["exit", "quit"]:
+                        # Temporarily exit patch_stdout context for confirmation
+                        if Confirm.ask("Are you sure you want to exit?"):
+                            break
+                        continue
+
+                    # Process input with orchestrator
+                    # Display continues updating during processing
+                    await orchestrator.process_input(user_input)
+
+                except KeyboardInterrupt:
+                    console.print("\n[yellow]Use Ctrl+D to exit[/yellow]")
                     continue
-
-                if user_input.lower() in ["exit", "quit"]:
-                    if Confirm.ask("Are you sure you want to exit?"):
-                        break
-                    continue
-
-                # Process input with orchestrator
-                # Result is now displayed via DisplayHook in real-time
-                await orchestrator.process_input(user_input)
-
-            except KeyboardInterrupt:
-                continue
-            except EOFError:
-                break
+                except EOFError:
+                    break
 
     finally:
+        # Stop streaming display if active
+        if use_streaming and hasattr(display, 'stop_streaming'):
+            display.stop_streaming()
+
         await orchestrator.shutdown()
 
 

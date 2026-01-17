@@ -120,7 +120,10 @@ logging:
 cli:
   theme: "monokai"
   use_rich: true
-  use_live_display: true  # Use LiveDisplayManager with fixed layout zones (Phase 5B)
+  # Display mode configuration (Phase 5C)
+  use_streaming_display: true  # NEW: Claude Code-like display with fixed TODO at top, streaming output (recommended)
+  use_live_display: false      # Use LiveDisplayManager with fixed layout zones (Phase 5B)
+  # Note: If both are false, uses basic DisplayManager (panel mode)
   show_progress: true
   history_file: "./.orchestrator/history"
   max_history_lines: 1000
