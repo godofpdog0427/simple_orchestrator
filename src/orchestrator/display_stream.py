@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from rich.console import Console
+from rich.table import Table
 
 from orchestrator.tasks.models import TodoItem
 
@@ -17,7 +18,7 @@ class StreamingDisplayManager:
     特點:
     - 純文字輸出，無 Panel 框框
     - 無 Live display，無固定區域
-    - TODO 只在更新時印一行
+    - TODO 只在更新時印表格
     - 內容持續向下滾動
     """
 
@@ -49,7 +50,7 @@ class StreamingDisplayManager:
 
     def update_todo_list(self, todos: list[TodoItem]) -> None:
         """
-        只在 TODO 改變時印一行。
+        只在 TODO 改變時印表格。
 
         Args:
             todos: List of TODO items
@@ -59,26 +60,39 @@ class StreamingDisplayManager:
 
         self._current_todos = todos
 
-        # 格式化為單行
-        items = []
-        for todo in todos[:5]:  # Max 5 items
-            icon = {
-                "completed": "✅",
-                "in_progress": "⏳",
-                "pending": "⏸"
-            }.get(todo.status, "❓")
-            # Truncate long task names
-            content = todo.content[:20]
-            if len(todo.content) > 20:
-                content += "..."
-            items.append(f"{icon} {content}")
+        # 建立 Rich Table
+        table = Table(title="📝 TODO Progress", show_header=True, header_style="bold magenta")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Status", width=12)
+        table.add_column("Task", style="white")
 
-        output = "TODO: " + "  ".join(items)
+        for idx, todo in enumerate(todos[:10], 1):  # Max 10 items
+            # Status icons
+            if todo.status == "completed":
+                status = "[green]✅ Done[/green]"
+            elif todo.status == "in_progress":
+                status = "[yellow]⏳ Active[/yellow]"
+            else:  # pending
+                status = "[dim]⏸ Pending[/dim]"
+
+            # Truncate long task names
+            content = todo.content
+            if len(content) > 60:
+                content = content[:57] + "..."
+
+            table.add_row(str(idx), status, content)
+
+        # 產生表格字串用於比較
+        from io import StringIO
+        string_buffer = StringIO()
+        temp_console = Console(file=string_buffer, force_terminal=True)
+        temp_console.print(table)
+        table_output = string_buffer.getvalue()
 
         # 只在改變時才印
-        if output != self._last_todo_output:
-            self.console.print(output, style="dim magenta")
-            self._last_todo_output = output
+        if table_output != self._last_todo_output:
+            self.console.print(table)
+            self._last_todo_output = table_output
 
     def append_thinking(self, text: str) -> None:
         """
