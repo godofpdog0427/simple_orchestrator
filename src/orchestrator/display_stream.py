@@ -61,26 +61,21 @@ class StreamingDisplayManager:
         self._current_todos = todos
 
         # 建立 Rich Table
-        table = Table(title="📝 TODO Progress", show_header=True, header_style="bold magenta")
-        table.add_column("#", style="dim", width=3)
-        table.add_column("Status", width=12)
+        table = Table(show_header=True, header_style="bold magenta", box=None)
+        table.add_column("#", style="dim", width=2)
+        table.add_column("Status", width=15)
         table.add_column("Task", style="white")
 
-        for idx, todo in enumerate(todos[:10], 1):  # Max 10 items
+        for idx, todo in enumerate(todos, 1):
             # Status icons
             if todo.status == "completed":
-                status = "[green]✅ Done[/green]"
+                status = "[green]✅ Completed[/green]"
             elif todo.status == "in_progress":
-                status = "[yellow]⏳ Active[/yellow]"
+                status = "[yellow]⏳ In Progress[/yellow]"
             else:  # pending
-                status = "[dim]⏸ Pending[/dim]"
+                status = "[dim]⏸  Pending[/dim]"
 
-            # Truncate long task names
-            content = todo.content
-            if len(content) > 60:
-                content = content[:57] + "..."
-
-            table.add_row(str(idx), status, content)
+            table.add_row(str(idx), status, todo.content)
 
         # 產生表格字串用於比較
         from io import StringIO
@@ -91,6 +86,9 @@ class StreamingDisplayManager:
 
         # 只在改變時才印
         if table_output != self._last_todo_output:
+            # 印標題（綠點 + Update Todos）
+            self.console.print("● Update Todos", style="bold green")
+            # 印表格內容
             self.console.print(table)
             self._last_todo_output = table_output
 
@@ -104,7 +102,8 @@ class StreamingDisplayManager:
         if not self._enabled or not text.strip():
             return
 
-        self.console.print(f"💭 {text}", style="cyan")
+        self.console.print("● Thinking", style="bold cyan")
+        self.console.print(f"  {text}", style="dim")
 
     def append_tool_execution(self, tool_name: str, args: dict[str, Any]) -> None:
         """
@@ -117,15 +116,27 @@ class StreamingDisplayManager:
         if not self._enabled:
             return
 
-        # Format first 2 args
+        # Format description from args
+        description = self._format_tool_description(tool_name, args)
+
+        # 印標題（綠點 + 工具名稱 + 描述）
+        self.console.print(f"● {tool_name}  {description}", style="bold")
+
+    def _format_tool_description(self, tool_name: str, args: dict[str, Any]) -> str:
+        """Format tool description based on tool type and arguments."""
+        # Special formatting for common tools
+        if tool_name == "bash":
+            cmd = args.get("command", "")
+            return cmd[:80] if len(cmd) <= 80 else cmd[:77] + "..."
+
+        # Generic formatting for other tools
         args_str = ", ".join(
             f"{k}={str(v)[:20]}"
             for k, v in list(args.items())[:2]
         )
         if len(args) > 2:
             args_str += "..."
-
-        self.console.print(f"🔧 {tool_name}({args_str})", style="yellow")
+        return args_str
 
     def append_tool_result(self, tool_name: str, success: bool, data: Any = None, error: str | None = None) -> None:
         """
@@ -140,13 +151,14 @@ class StreamingDisplayManager:
         if not self._enabled:
             return
 
-        if success:
-            result_str = str(data)[:100] if data else "OK"
-            if data and len(str(data)) > 100:
-                result_str += "..."
-            self.console.print(f"  ✅ {result_str}", style="green")
-        else:
-            self.console.print(f"  ❌ {error or 'Unknown error'}", style="red")
+        # 印輸出內容（縮排）
+        if success and data:
+            # 將多行輸出每行都加上縮排
+            result_str = str(data)
+            for line in result_str.splitlines():
+                self.console.print(f"  {line}")
+        elif not success:
+            self.console.print(f"  Error: {error or 'Unknown error'}", style="red")
 
     def append_task_start(self, task_title: str, task_description: str | None = None) -> None:
         """
@@ -159,9 +171,9 @@ class StreamingDisplayManager:
         if not self._enabled:
             return
 
-        self.console.print(f"\n🚀 Starting Task: {task_title}", style="bold green")
+        self.console.print(f"\n● Task  {task_title}", style="bold green")
         if task_description and task_description != task_title:
-            self.console.print(f"   {task_description}", style="dim")
+            self.console.print(f"  {task_description}", style="dim")
 
     def append_task_complete(self, task_title: str, result: str | None = None) -> None:
         """
@@ -174,12 +186,10 @@ class StreamingDisplayManager:
         if not self._enabled:
             return
 
-        self.console.print(f"\n✅ Task Completed: {task_title}", style="bold green")
+        self.console.print(f"\n● Task Complete  {task_title}", style="bold green")
         if result:
-            result_str = str(result)[:200]
-            if len(str(result)) > 200:
-                result_str += "..."
-            self.console.print(f"   {result_str}", style="dim")
+            for line in str(result).splitlines():
+                self.console.print(f"  {line}", style="dim")
 
     def append_task_failed(self, task_title: str, error: str) -> None:
         """
@@ -192,8 +202,8 @@ class StreamingDisplayManager:
         if not self._enabled:
             return
 
-        self.console.print(f"\n❌ Task Failed: {task_title}", style="bold red")
-        self.console.print(f"   Error: {error}", style="red")
+        self.console.print(f"\n● Task Failed  {task_title}", style="bold red")
+        self.console.print(f"  Error: {error}", style="red")
 
     def append_iteration(self, current: int, maximum: int) -> None:
         """
