@@ -1,6 +1,8 @@
 """Minimal streaming display manager - pure text output, no Live, no Panel."""
 
+import asyncio
 import logging
+import sys
 from typing import Any
 
 from rich.console import Console
@@ -46,6 +48,27 @@ class StreamingDisplayManager:
         """Check if display is enabled."""
         return self._enabled
 
+    def _stream_text(self, text: str, style: str = "") -> None:
+        """
+        Stream text character-by-character (typewriter effect).
+
+        Args:
+            text: Text to stream
+            style: Rich style to apply
+        """
+        # Use Rich's console for styled output
+        for char in text:
+            # Print char without newline
+            if style:
+                self.console.print(char, end="", style=style)
+            else:
+                self.console.print(char, end="")
+            # Small delay for typewriter effect
+            import time
+            time.sleep(0.005)  # 5ms delay per char
+        # Print final newline
+        self.console.print()
+
     # Core append methods (pure text output)
 
     def update_todo_list(self, todos: list[TodoItem]) -> None:
@@ -86,8 +109,8 @@ class StreamingDisplayManager:
 
         # 只在改變時才印
         if table_output != self._last_todo_output:
-            # 印標題（綠點 + Update Todos）
-            self.console.print("● Update Todos", style="bold green")
+            # 印標題（綠點 + Update Todos）- Issue 3: Add spacing
+            self.console.print("\n● Update Todos", style="bold green")
             # 印表格內容
             self.console.print(table)
             self._last_todo_output = table_output
@@ -102,8 +125,12 @@ class StreamingDisplayManager:
         if not self._enabled or not text.strip():
             return
 
-        self.console.print("● Thinking", style="bold cyan")
-        self.console.print(f"  {text}", style="dim")
+        # Issue 3: Add spacing before
+        self.console.print("\n● Thinking", style="bold cyan")
+        # Issue 2: Change from dim to cyan
+        # Issue 4: Stream text char-by-char
+        self.console.print("  ", end="")  # Indentation
+        self._stream_text(text, style="cyan")
 
     def append_tool_execution(self, tool_name: str, args: dict[str, Any]) -> None:
         """
@@ -119,8 +146,9 @@ class StreamingDisplayManager:
         # Format description from args
         description = self._format_tool_description(tool_name, args)
 
+        # Issue 3: Add spacing before
         # 印標題（綠點 + 工具名稱 + 描述）
-        self.console.print(f"● {tool_name}  {description}", style="bold")
+        self.console.print(f"\n● {tool_name}  {description}", style="bold")
 
     def _format_tool_description(self, tool_name: str, args: dict[str, Any]) -> str:
         """Format tool description based on tool type and arguments."""
@@ -188,8 +216,10 @@ class StreamingDisplayManager:
 
         self.console.print(f"\n● Task Complete  {task_title}", style="bold green")
         if result:
+            # Issue 4: Stream result text line-by-line
             for line in str(result).splitlines():
-                self.console.print(f"  {line}", style="dim")
+                self.console.print("  ", end="")  # Indentation
+                self._stream_text(line, style="dim")
 
     def append_task_failed(self, task_title: str, error: str) -> None:
         """
@@ -216,7 +246,8 @@ class StreamingDisplayManager:
         if not self._enabled:
             return
 
-        self.console.print(f"[Iteration {current}/{maximum}]", style="dim")
+        # Issue 5: Add spacing before and after
+        self.console.print(f"\n[Iteration {current}/{maximum}]\n", style="dim")
 
     # Backward compatibility with DisplayManager interface
 
