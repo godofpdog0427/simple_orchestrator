@@ -80,10 +80,7 @@ async def _run_interactive(config: dict) -> None:
             while True:
                 try:
                     # Get user input (non-blocking async)
-                    user_input = await session.prompt_async(
-                        "orchestrator> ",
-                        patch_stdout=True
-                    )
+                    user_input = await session.prompt_async("orchestrator> ")
 
                     if not user_input.strip():
                         continue
