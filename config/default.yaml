@@ -67,6 +67,19 @@ tools:
     enabled: true
     requires_approval: false
 
+  web_fetch:
+    enabled: true
+    requires_approval: false
+    timeout_seconds: 30
+    max_response_size_mb: 5
+    follow_redirects: true
+    max_redirects: 10
+    user_agent: "SimpleOrchestrator/1.0"
+    allowed_schemes:
+      - http
+      - https
+    blocked_domains: []  # Optional: Add domains to block for security
+
   directories:
     - "./user_extensions/tools"
 

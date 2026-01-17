@@ -42,6 +42,7 @@ class ToolRegistry:
         from orchestrator.tools.builtin.file_ops import FileDeleteTool, FileReadTool, FileWriteTool
         from orchestrator.tools.builtin.task_decompose import TaskDecomposeTool
         from orchestrator.tools.builtin.todo import TodoListTool
+        from orchestrator.tools.builtin.web_fetch import WebFetchTool
 
         # Register bash tool
         bash_config = self.config.get("bash", {})
@@ -71,6 +72,11 @@ class ToolRegistry:
         task_decompose_config = self.config.get("task_decompose", {})
         if task_decompose_config.get("enabled", True):
             self.register(TaskDecomposeTool())
+
+        # Register WebFetch tool
+        web_fetch_config = self.config.get("web_fetch", {})
+        if web_fetch_config.get("enabled", True):
+            self.register(WebFetchTool(web_fetch_config))
 
     async def _load_tools_from_directory(self, directory: Path) -> None:
         """
