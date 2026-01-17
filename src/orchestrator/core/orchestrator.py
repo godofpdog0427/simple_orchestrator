@@ -37,9 +37,15 @@ class Orchestrator:
 
     def _setup_logging(self) -> None:
         """Setup logging based on configuration."""
+        from pathlib import Path
+
         log_config = self.config.get("logging", {})
         log_level = log_config.get("level", "INFO")
         log_file = log_config.get("file", "./.orchestrator/logs/orchestrator.log")
+
+        # Ensure log directory exists
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Configure logger
         logging.basicConfig(
