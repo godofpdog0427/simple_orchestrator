@@ -54,6 +54,12 @@ dmypy.json
 # All Agent file operations happen here to prevent project pollution
 .orchestrator/workspace/
 
+# Workspace state files (Phase 5B)
+# Contains conversation history and task summaries per session
+# Note: These are already excluded by .orchestrator/ pattern above
+# but listed explicitly for clarity
+# .orchestrator/workspace/*.json
+
 # Environment
 .env
 .env.local

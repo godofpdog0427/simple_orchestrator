@@ -101,11 +101,36 @@ subagents:
     allowed_tools: ["bash", "file_read", "file_write"]  # Default allowed tools
 
 cache:
-  enabled: true  # Enable caching system (Phase 5)
+  enabled: true  # Enable caching system (Phase 5A)
   ttl: 3600  # Default TTL in seconds (1 hour)
   max_entries: 1000  # Maximum number of cache entries
   tool_results: true  # Cache tool execution results
   llm_responses: false  # Cache LLM responses (disabled by default for safety)
+
+# Workspace Settings (Phase 5B)
+workspace:
+  enabled: true  # Enable workspace persistence
+  workspace_dir: ".orchestrator/workspace_state"  # Directory for workspace state files (separate from working directory)
+
+  # Task summaries
+  max_task_summaries: 10  # Keep last N task summaries in rolling window
+
+  # Conversation compression
+  compression:
+    enabled: true
+    max_messages: 100  # Compress when conversation > 100 messages
+    compress_oldest: 50  # Compress oldest N messages into summary
+
+  # Workspace lifecycle
+  lifecycle:
+    ttl_days: 365  # Delete workspaces after 1 year
+    auto_cleanup_on_start: false  # Clean old workspaces on orchestrator startup
+
+  # Context injection settings
+  context_injection:
+    max_recent_tasks: 3  # Inject last N task summaries
+    max_conversation_messages: 10  # Inject last N conversation messages
+    max_related_tasks: 2  # Inject top N keyword-matched tasks
 
 tasks:
   max_depth: 5  # Maximum subtask nesting depth (Phase 3)

@@ -1,6 +1,7 @@
 """Core orchestrator implementation."""
 
 import logging
+from datetime import datetime
 from typing import Any, Optional
 
 from orchestrator.tasks.models import Task, TaskStatus
@@ -31,6 +32,9 @@ class Orchestrator:
         self.subagent_manager: Optional[Any] = None  # Phase 4B
         self.cache_manager: Optional[Any] = None  # Phase 5
         self.display_manager: Optional[Any] = None  # Phase 5B streaming display
+        self.workspace_manager: Optional[Any] = None  # Phase 5B workspace
+        self.workspace: Optional[Any] = None  # Phase 5B workspace state
+        self.summarizer: Optional[Any] = None  # Phase 5B task summarizer
 
         # Setup logging
         self._setup_logging()
@@ -109,6 +113,13 @@ class Orchestrator:
                     self.config["skills"]["user_path"]
                 )
                 logger.debug(f"Resolved skills user_path: {self.config['skills']['user_path']}")
+
+        # Resolve workspace directory (Phase 5B)
+        if "workspace" in self.config and "workspace_dir" in self.config["workspace"]:
+            self.config["workspace"]["workspace_dir"] = resolve_path(
+                self.config["workspace"]["workspace_dir"]
+            )
+            logger.debug(f"Resolved workspace workspace_dir: {self.config['workspace']['workspace_dir']}")
 
     async def initialize(self) -> None:
         """Initialize orchestrator components."""
@@ -222,6 +233,26 @@ class Orchestrator:
             )
             self.tool_registry.register(subagent_tool)
 
+        # Initialize workspace manager and state (Phase 5B)
+        workspace_config = self.config.get("workspace", {})
+        if workspace_config.get("enabled", True):
+            import uuid
+            from orchestrator.workspace.state import WorkspaceManager
+            from orchestrator.workspace.summarizer import TaskSummarizer
+
+            workspace_dir = workspace_config.get("workspace_dir", ".orchestrator/workspace")
+            self.workspace_manager = WorkspaceManager(workspace_dir)
+
+            # Load or create workspace for this session
+            session_id = self.config.get("session_id") or str(uuid.uuid4())
+            self.workspace = self.workspace_manager.load_or_create(session_id)
+
+            # Initialize task summarizer
+            self.summarizer = TaskSummarizer(self.llm_client)
+
+            logger.info(f"Loaded workspace: {session_id}")
+            logger.info(f"Workspace has {len(self.workspace.task_summaries)} task summaries")
+
         logger.info("Orchestrator initialized successfully")
 
     async def shutdown(self) -> None:
@@ -233,6 +264,11 @@ class Orchestrator:
 
         # Trigger orchestrator.stop event
         await self._trigger_hook("orchestrator.stop", {"final_state": {"should_stop": self.should_stop}})
+
+        # Save workspace before shutdown (Phase 5B)
+        if self.workspace_manager and self.workspace:
+            self.workspace_manager.save(self.workspace)
+            logger.info(f"Workspace saved: {self.workspace.session_id}")
 
         # Shutdown subagent manager (Phase 4B)
         if self.subagent_manager:
@@ -364,6 +400,43 @@ class Orchestrator:
             # Trigger task.completed event
             await self._trigger_hook("task.completed", {"task": task, "result": result})
 
+            # Phase 5B: Generate summary and add to workspace
+            if self.workspace and self.summarizer:
+                try:
+                    from orchestrator.workspace.state import TaskSummary
+
+                    # Generate summary
+                    summary_text = await self.summarizer.generate_summary(
+                        task, context.get("conversation_history", [])
+                    )
+
+                    # Extract tools used
+                    tools_used = self.summarizer._extract_tools_used(
+                        context.get("conversation_history", [])
+                    )
+
+                    # Create task summary
+                    task_summary = TaskSummary(
+                        task_id=task.id,
+                        task_description=task.description or task.title,
+                        timestamp=datetime.now(),
+                        summary=summary_text,
+                        key_results=[str(result)[:200]] if result else [],
+                        tools_used=tools_used,
+                        status="COMPLETED",
+                    )
+
+                    # Add to workspace
+                    self.workspace.add_task_summary(task_summary)
+
+                    # Save workspace after each task
+                    self.workspace_manager.save(self.workspace)
+
+                    logger.debug(f"Added task summary to workspace: {task.id}")
+                except Exception as e:
+                    logger.error(f"Error generating task summary: {e}", exc_info=True)
+                    # Continue despite summary error
+
             # Phase 3: Handle task completion for dependencies and hierarchy
             await self._handle_task_completion(task.id)
 
@@ -395,9 +468,60 @@ class Orchestrator:
             "task_description": task.description or task.title,  # Phase 4A: for skill matching
             "tools": self.tool_registry.get_tool_schemas() if self.tool_registry else [],
             "conversation_history": [],
+            "workspace_context": None,  # Phase 5B: Workspace context
         }
 
+        # Phase 5B: Inject workspace context
+        if self.workspace:
+            context["workspace_context"] = self._get_workspace_context(task)
+
         return context
+
+    def _get_workspace_context(self, task: Task) -> str:
+        """
+        Extract relevant context from workspace for current task.
+
+        Args:
+            task: Current task
+
+        Returns:
+            Formatted workspace context string
+        """
+        context_parts = []
+
+        # 1. Recent task summaries (last 3 tasks)
+        recent_summaries = list(self.workspace.task_summaries)[-3:]
+        if recent_summaries:
+            context_parts.append("## Recent Tasks:")
+            for ts in recent_summaries:
+                context_parts.append(
+                    f"- [{ts.timestamp.strftime('%H:%M')}] {ts.task_description}\n"
+                    f"  Summary: {ts.summary}\n"
+                    f"  Status: {ts.status}"
+                )
+
+        # 2. Keyword search in summaries (first 5 words of task description)
+        task_desc = task.description or task.title
+        keywords = task_desc.split()[:5]
+        related_summaries = self.workspace.search_summaries(keywords)
+        if related_summaries:
+            context_parts.append("\n## Related Past Tasks:")
+            for ts in related_summaries[:2]:  # Top 2 related
+                context_parts.append(
+                    f"- {ts.task_description}\n"
+                    f"  Summary: {ts.summary}"
+                )
+
+        # 3. Recent workspace conversation (last 10 messages)
+        recent_conversation = self.workspace.get_recent_context(max_messages=10)
+        if recent_conversation:
+            context_parts.append("\n## Recent Conversation:")
+            for msg in recent_conversation:
+                role_label = "User" if msg.role == "user" else "Assistant"
+                content = msg.content if isinstance(msg.content, str) else "[Tool use]"
+                context_parts.append(f"{role_label}: {content[:200]}...")
+
+        return "\n".join(context_parts) if context_parts else ""
 
     async def _reasoning_loop(self, task: Task, context: dict[str, Any]) -> Any:
         """
@@ -592,6 +716,11 @@ You have access to tools that will be provided via the API. Use them as needed t
         skill_instructions = self._get_skill_instructions(context)
         if skill_instructions:
             prompt += f"\n\n{skill_instructions}"
+
+        # Inject workspace context if available (Phase 5B)
+        workspace_context = context.get("workspace_context")
+        if workspace_context:
+            prompt += f"\n\n# Context from This Session:\n{workspace_context}"
 
         prompt += """
 

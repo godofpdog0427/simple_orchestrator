@@ -86,8 +86,16 @@ async def _run_interactive(config: dict) -> None:
                         break
                     continue
 
+                # NEW (Phase 5B): Add user message to workspace conversation
+                if orchestrator.workspace:
+                    orchestrator.workspace.add_user_message(user_input)
+
                 # Process input with orchestrator
-                await orchestrator.process_input(user_input)
+                result = await orchestrator.process_input(user_input)
+
+                # NEW (Phase 5B): Add assistant response to workspace conversation
+                if orchestrator.workspace and result:
+                    orchestrator.workspace.add_assistant_message(result)
 
             except KeyboardInterrupt:
                 console.print("\n[yellow]Use Ctrl+D to exit[/yellow]")
@@ -431,6 +439,115 @@ def state_export(path: Path) -> None:
     """Export orchestrator state to a file."""
     console.print(f"Exporting state to: {path}")
     console.print("[yellow]Not implemented yet[/yellow]")
+
+
+@cli.group()
+@click.pass_context
+def workspace(ctx: click.Context) -> None:
+    """Workspace management commands (Phase 5B)."""
+    # Load config for workspace commands
+    config_path = ctx.obj.get("config")
+    ctx.obj["loaded_config"] = _load_config(config_path)
+
+
+@workspace.command("list")
+@click.pass_context
+def workspace_list(ctx: click.Context) -> None:
+    """List all workspaces."""
+    from datetime import datetime
+    from pathlib import Path
+    from rich.table import Table
+    from orchestrator.workspace.state import WorkspaceManager
+
+    config = ctx.obj.get("loaded_config", {})
+    workspace_config = config.get("workspace", {})
+    workspace_dir = workspace_config.get("workspace_dir", ".orchestrator/workspace")
+
+    manager = WorkspaceManager(workspace_dir)
+    workspaces = []
+
+    for workspace_file in manager.workspace_dir.glob("*.json"):
+        try:
+            stat = workspace_file.stat()
+            workspaces.append({
+                "session_id": workspace_file.stem,
+                "modified": datetime.fromtimestamp(stat.st_mtime),
+                "size_kb": stat.st_size / 1024
+            })
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not read {workspace_file.name}: {e}[/yellow]")
+
+    if not workspaces:
+        console.print("[yellow]No workspaces found[/yellow]")
+        return
+
+    # Display as table
+    table = Table(title="Workspaces")
+    table.add_column("Session ID", style="cyan")
+    table.add_column("Last Modified", style="green")
+    table.add_column("Size (KB)", justify="right", style="yellow")
+
+    for ws in sorted(workspaces, key=lambda x: x['modified'], reverse=True):
+        table.add_row(
+            ws['session_id'],
+            ws['modified'].strftime("%Y-%m-%d %H:%M:%S"),
+            f"{ws['size_kb']:.2f}"
+        )
+
+    console.print(table)
+
+
+@workspace.command("delete")
+@click.argument("session_id")
+@click.pass_context
+def workspace_delete(ctx: click.Context, session_id: str) -> None:
+    """Delete specific workspace."""
+    from orchestrator.workspace.state import WorkspaceManager
+
+    config = ctx.obj.get("loaded_config", {})
+    workspace_config = config.get("workspace", {})
+    workspace_dir = workspace_config.get("workspace_dir", ".orchestrator/workspace")
+
+    manager = WorkspaceManager(workspace_dir)
+    workspace_file = manager.workspace_dir / f"{session_id}.json"
+
+    if not workspace_file.exists():
+        console.print(f"[red]Workspace not found: {session_id}[/red]")
+        return
+
+    if Confirm.ask(f"Delete workspace {session_id}?"):
+        try:
+            workspace_file.unlink()
+            console.print(f"[green]Deleted workspace: {session_id}[/green]")
+        except Exception as e:
+            console.print(f"[red]Error deleting workspace: {e}[/red]")
+    else:
+        console.print("[yellow]Deletion cancelled[/yellow]")
+
+
+@workspace.command("purge")
+@click.option("--older-than", type=int, default=365, help="Delete workspaces older than N days")
+@click.pass_context
+def workspace_purge(ctx: click.Context, older_than: int) -> None:
+    """Purge old workspaces."""
+    from orchestrator.workspace.state import WorkspaceManager
+    from orchestrator.workspace.lifecycle import WorkspaceLifecycleManager
+
+    config = ctx.obj.get("loaded_config", {})
+    workspace_config = config.get("workspace", {})
+    workspace_dir = workspace_config.get("workspace_dir", ".orchestrator/workspace")
+
+    manager = WorkspaceManager(workspace_dir)
+    lifecycle = WorkspaceLifecycleManager(manager, None)
+
+    if Confirm.ask(f"Delete workspaces older than {older_than} days?"):
+        try:
+            count = lifecycle.cleanup_old_workspaces(days=older_than)
+            console.print(f"[green]Purged {count} workspace(s)[/green]")
+        except Exception as e:
+            console.print(f"[red]Error during purge: {e}[/red]")
+    else:
+        console.print("[yellow]Purge cancelled[/yellow]")
 
 
 def main() -> None:
