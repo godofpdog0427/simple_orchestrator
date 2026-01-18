@@ -7,6 +7,7 @@ from rich.table import Table
 from rich import box
 
 from orchestrator.cli.mascot import SealMascot, MascotPose
+from orchestrator.cli.seal_facts import get_random_seal_fact
 from orchestrator.modes.models import ExecutionMode
 
 
@@ -73,25 +74,34 @@ class WelcomeScreen:
             f"{help_line}\n"
         )
 
+        # Middle column content (random seal fact)
+        seal_fact = get_random_seal_fact()
+        middle_content = (
+            f"\n[bold dim]🌊 Did you know?[/bold dim]\n\n"
+            f"[dim]{seal_fact}[/dim]\n"
+        )
+
         # Right column content (mode guidelines)
         guidelines = self._get_mode_guidelines(mode)
         right_content = f"\n💡 [bold]Mode Guidelines[/bold]\n\n{guidelines}"
 
-        # Create table with 2 columns (MINIMAL_HEAVY_HEAD creates vertical divider)
+        # Create table with 3 columns (colored dividers via border_style)
         table = Table(
             show_header=False,
-            box=box.MINIMAL_HEAVY_HEAD,  # Creates middle vertical line │
+            box=box.MINIMAL_HEAVY_HEAD,  # Creates vertical dividers │
+            border_style=color,  # Color ALL dividers to match mode
             padding=(0, 2),
             expand=True,
             show_edge=False,  # No outer border (Panel will provide it)
         )
 
         # Add columns
-        table.add_column(width=50, vertical="top")  # Left: mascot (fixed width)
+        table.add_column(width=40, vertical="top")  # Left: mascot (fixed width)
+        table.add_column(width=35, vertical="top")  # Middle: seal facts (fixed width)
         table.add_column(vertical="top")  # Right: guidelines (expand)
 
-        # Add single row with both contents
-        table.add_row(left_content, right_content)
+        # Add single row with three contents
+        table.add_row(left_content, middle_content, right_content)
 
         # Wrap in SINGLE panel with title
         panel = Panel(

@@ -1,6 +1,7 @@
 """CLI package for orchestrator."""
 
 from orchestrator.cli.mascot import MascotPose, SealMascot
+from orchestrator.cli.seal_facts import get_random_seal_fact, SEAL_FACTS
 from orchestrator.cli.welcome import WelcomeScreen
 
 # Re-export main function from parent cli module for entry point compatibility
@@ -21,4 +22,4 @@ else:
     from .. import cli as cli_module
     main = cli_module.main
 
-__all__ = ["MascotPose", "SealMascot", "WelcomeScreen", "main"]
+__all__ = ["MascotPose", "SealMascot", "WelcomeScreen", "get_random_seal_fact", "SEAL_FACTS", "main"]

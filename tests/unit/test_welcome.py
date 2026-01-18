@@ -96,3 +96,22 @@ class TestWelcomeScreen:
             guidelines = welcome._get_mode_guidelines(mode)
             assert len(guidelines) > 0
             assert guidelines.strip() != ""
+
+    def test_display_welcome_three_columns(self, welcome):
+        """Test welcome display has three columns with seal fact."""
+        # Use wider console to see all three columns
+        from io import StringIO
+        wide_console = Console(file=StringIO(), width=150, legacy_windows=False)
+        welcome_wide = WelcomeScreen(wide_console)
+
+        welcome_wide.display_welcome(ExecutionMode.PLAN)
+        output = wide_console.file.getvalue()
+
+        # Should contain seal fact header
+        assert "🌊 Did you know?" in output or "Did you know" in output
+
+        # Should contain mode guidelines
+        assert "Mode Guidelines" in output or "PLAN Mode" in output
+
+        # Should contain seal emoji in fact
+        assert "🦭" in output
