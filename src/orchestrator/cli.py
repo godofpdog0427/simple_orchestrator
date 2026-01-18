@@ -167,29 +167,38 @@ async def _run_interactive(config: dict) -> None:
 
                 # UX Enhancement: Auto-prompt to execute after planning (Phase 6A+)
                 if orchestrator.mode_manager and orchestrator.mode_manager.current_mode.value == "plan":
-                    # Check if there are pending tasks from planning
-                    from orchestrator.tasks.models import TaskStatus
-                    pending_tasks = await orchestrator.task_manager.list_tasks(status=TaskStatus.PENDING)
+                    # Always show options after PLAN mode response
+                    console.print("\n[bold yellow]What would you like to do next?[/bold yellow]")
+                    console.print("  [cyan]1.[/cyan] Execute plan directly (switch to EXECUTE mode)")
+                    console.print("  [cyan]2.[/cyan] Continue planning (stay in PLAN mode for discussion)")
 
-                    if pending_tasks:
-                        # Ask user if they want to execute now
-                        console.print("\n[bold yellow]Planning complete![/bold yellow]")
-                        execute_prompt = await session.prompt_async(
-                            HTML("<ansiyellow>Execute plan now? (y/n): </ansiyellow>")
-                        )
+                    choice_prompt = await session.prompt_async(
+                        HTML("<ansiyellow>Choose option (1/2): </ansiyellow>")
+                    )
 
-                        if execute_prompt.strip().lower() in ["y", "yes"]:
-                            # Switch to EXECUTE mode
-                            from orchestrator.modes.models import ExecutionMode
-                            orchestrator.set_mode(ExecutionMode.EXECUTE)
-                            console.print("[green]✓ Switched to EXECUTE mode[/green]")
+                    if choice_prompt.strip() == "1":
+                        # Check if there are pending tasks from planning
+                        from orchestrator.tasks.models import TaskStatus
+                        pending_tasks = await orchestrator.task_manager.list_tasks(status=TaskStatus.PENDING)
 
+                        # Switch to EXECUTE mode
+                        from orchestrator.modes.models import ExecutionMode
+                        orchestrator.set_mode(ExecutionMode.EXECUTE)
+                        console.print("[green]✓ Switched to EXECUTE mode[/green]")
+
+                        if pending_tasks:
                             # Execute all pending tasks
                             console.print("\n[bold green]Starting execution...[/bold green]\n")
                             exec_result = await orchestrator._execute_all_pending_tasks()
 
                             if orchestrator.workspace and exec_result:
                                 orchestrator.workspace.add_assistant_message(exec_result)
+                        else:
+                            # No pending tasks - ready for direct execution
+                            console.print("\n[green]Ready to execute. Please enter your next command.[/green]")
+                    else:
+                        # Option 2 or any other input - continue planning
+                        console.print("[yellow]Continuing in PLAN mode...[/yellow]")
 
             except KeyboardInterrupt:
                 console.print("\n[yellow]Use Ctrl+D to exit[/yellow]")
