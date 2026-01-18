@@ -3,7 +3,8 @@
 from typing import Optional
 from rich.console import Console
 from rich.panel import Panel
-from rich.align import Align
+from rich.columns import Columns
+from rich.table import Table
 
 from orchestrator.cli.mascot import SealMascot, MascotPose
 from orchestrator.modes.models import ExecutionMode
@@ -34,7 +35,7 @@ class WelcomeScreen:
         task_progress: Optional[tuple[int, int]] = None,
         username: Optional[str] = None,
     ) -> None:
-        """Display full welcome screen with mascot.
+        """Display full welcome screen with mascot in side-by-side layout.
 
         Args:
             mode: Current execution mode
@@ -53,7 +54,7 @@ class WelcomeScreen:
         mascot = SealMascot.get_colored_pose(pose, color)
 
         # Build status line
-        status_parts = [f"Mode: [bold]{mode.value.upper()}[/bold]"]
+        status_parts = [f"[bold]{mode.value.upper()}[/bold]"]
         if session_name:
             status_parts.append(f"Session: {session_name}")
         if task_progress:
@@ -62,23 +63,36 @@ class WelcomeScreen:
         status_line = " | ".join(status_parts)
 
         # Build help line
-        help_line = "Type [yellow]/help[/yellow] for commands | [yellow]/quit[/yellow] to exit"
+        help_line = "[dim]Type [yellow]/help[/yellow] for commands | [yellow]/quit[/yellow] to exit[/dim]"
 
-        # Combine all parts
-        content = (
+        # Left panel: Mascot + Info
+        left_content = (
             f"\n{greeting}\n\n"
             f"{mascot}\n\n"
             f"{status_line}\n\n"
             f"{help_line}\n"
         )
 
-        # Display panel
-        panel = Panel(
-            Align.center(content),
+        left_panel = Panel(
+            left_content,
             border_style=color,
             padding=(1, 2),
+            width=50,
         )
-        self.console.print(panel)
+
+        # Right panel: Mode Guidelines
+        guidelines = self._get_mode_guidelines(mode)
+        right_panel = Panel(
+            guidelines,
+            title=f"💡 [bold]Mode Guidelines[/bold]",
+            border_style=color,
+            padding=(1, 2),
+            expand=True,
+        )
+
+        # Display side-by-side using Columns
+        columns = Columns([left_panel, right_panel], equal=False, expand=True)
+        self.console.print(columns)
 
     def _build_greeting(self, username: Optional[str] = None) -> str:
         """Build greeting text.
@@ -90,27 +104,9 @@ class WelcomeScreen:
             Greeting string
         """
         if username:
-            return f"Welcome back {username}! 👋"
+            return f"[bold]Welcome back {username}! 👋[/bold]"
         else:
-            return "Welcome to Orchestrator! 👋"
-
-    def display_mode_guidelines(self, mode: ExecutionMode) -> None:
-        """Display mode-specific guidelines in compact format.
-
-        Args:
-            mode: Current execution mode
-        """
-        guidelines = self._get_mode_guidelines(mode)
-        color = self.MODE_COLORS.get(mode, "white")
-
-        panel = Panel(
-            guidelines,
-            title=f"💡 [bold]Mode Guidelines: {mode.value.upper()}[/bold]",
-            border_style=color,
-            padding=(1, 2),
-        )
-        self.console.print(panel)
-        self.console.print()  # Blank line
+            return "[bold]Welcome to Orchestrator! 👋[/bold]"
 
     def _get_mode_guidelines(self, mode: ExecutionMode) -> str:
         """Get compact mode guidelines text.

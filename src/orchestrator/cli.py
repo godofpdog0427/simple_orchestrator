@@ -93,16 +93,13 @@ async def _run_interactive(config: dict) -> None:
     # Get username from config or environment
     username = config.get("user", {}).get("username") or os.environ.get("USER")
 
-    # Display welcome screen with mascot (Phase 6E)
+    # Display welcome screen with mascot and guidelines in side-by-side layout (Phase 6E)
     welcome.display_welcome(
         mode=current_mode,
         session_name=session_name,
         task_progress=task_progress,
         username=username,
     )
-
-    # Display mode guidelines (Phase 6E)
-    welcome.display_mode_guidelines(current_mode)
 
     # Setup prompt session with history
     history_file = config.get("cli", {}).get("history_file", "./.orchestrator/history")

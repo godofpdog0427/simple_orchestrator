@@ -11,9 +11,10 @@ class TestSealMascot:
     def test_get_pose_happy(self):
         """Test getting happy pose."""
         art = SealMascot.get_pose(MascotPose.HAPPY)
-        assert "●    ●" in art  # Eyes (block art style)
-        assert "◡◡◡" in art  # Happy mouth
-        assert "~~~" in art  # Water waves
+        assert "[black]██[/black]" in art  # Black eyes (Rich markup)
+        assert "[white]" in art  # White belly
+        assert "[magenta]██[/magenta]" in art  # Pink blush
+        assert "[bright_cyan]~~~[/bright_cyan]" in art  # Cyan water waves
         assert "██" in art  # Block characters for body
 
     def test_get_pose_thinking(self):
@@ -29,15 +30,18 @@ class TestSealMascot:
     def test_get_pose_sleeping(self):
         """Test getting sleeping pose."""
         art = SealMascot.get_pose(MascotPose.SLEEPING)
-        assert "-    -" in art  # Closed eyes (block art style)
-        assert "zzz" in art  # Sleep indicator
+        assert "[bright_black]-[/bright_black]" in art  # Closed eyes (Rich markup)
+        assert "[cyan]~~~[/cyan]" in art  # Sleeping mouth
+        assert "[dim]zzz[/dim]" in art  # Sleep indicator
         assert "██" in art  # Block characters for body
 
     def test_get_colored_pose(self):
         """Test getting colored pose."""
         art = SealMascot.get_colored_pose(MascotPose.HAPPY, "cyan")
-        assert "[cyan]" in art
-        assert "[/cyan]" in art
+        # Note: The seal has embedded Rich color markup already
+        # The color parameter is now used for panel border, not the seal itself
+        assert "[black]██[/black]" in art  # Eyes should still be present
+        assert "[white]" in art  # White belly should be present
 
     def test_all_poses_have_water(self):
         """Test all poses include water (seal's element)."""

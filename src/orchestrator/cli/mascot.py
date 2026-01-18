@@ -13,47 +13,65 @@ class MascotPose(str, Enum):
 
 
 class SealMascot:
-    """Seal mascot with multiple poses (block art style, lying down)."""
+    """Seal mascot with multiple poses (inspired by seal_mascot.py with Rich colors)."""
 
-    HAPPY = """
-        ▄▄▄▄
-    ████▀▀▀▀████
-   ██  ●    ●  ██▄
-   ██    ◡◡◡    ███
-    ██▄▄▄▄▄▄▄███
-      ████████
-  ~~~~~~~~~~~~~~~~~~
-"""
+    # Seal with detailed features: body (gray), belly (white), eyes, nose, blush
+    # Using Rich markup for colors
+    HAPPY = """                [bright_black]██████[/bright_black]
+        [bright_black]████████[/bright_black][white]██████[/white][bright_black]████[/bright_black]
+      [bright_black]██[/bright_black][white]████████████████[/white][bright_black]████[/bright_black]
+    [bright_black]██[/bright_black][white]██████████████████████[/white][bright_black]██[/bright_black]
+   [bright_black]██[/bright_black][white]████[black]██[/black][white]██████████[black]██[/black][white]██████[/white][bright_black]████[/bright_black]
+   [bright_black]██[/bright_black][white]████[black]██[/black][white]██████████[black]██[/black][white]████████[/white][bright_black]██[/bright_black][bright_black]██[/bright_black]
+  [bright_black]██[/bright_black][white]██████████████████████████[/white][bright_black]██[/bright_black]
+  [bright_black]██[/bright_black][white]██[magenta]██[/magenta][white]████████████████████[/white][bright_black]████[/bright_black]
+   [bright_black]██[/bright_black][white]████████████████████████[/white][bright_black]██[/bright_black]
+    [bright_black]████[/bright_black][white]████████████████[/white][bright_black]██████[/bright_black]
+      [bright_black]████████████████████████[/bright_black]
+    [bright_black]████[/bright_black]  [bright_black]████████████[/bright_black]  [bright_black]████[/bright_black]
+  [bright_cyan]~~~[/bright_cyan]    [bright_cyan]~~~~~~~~~~~~[/bright_cyan]    [bright_cyan]~~~[/bright_cyan]"""
 
-    THINKING = """
-        ▄▄▄▄
-    ████▀▀▀▀████
-   ██  ●    ●  ██▄
-   ██    ...    ███
-    ██▄▄▄▄▄▄▄███
-      ████████
-  ~~~~~~~~~~~~~~~~~~
-"""
+    THINKING = """                [bright_black]██████[/bright_black]
+        [bright_black]████████[/bright_black][white]██████[/white][bright_black]████[/bright_black]
+      [bright_black]██[/bright_black][white]████████████████[/white][bright_black]████[/bright_black]
+    [bright_black]██[/bright_black][white]██████████████████████[/white][bright_black]██[/bright_black]
+   [bright_black]██[/bright_black][white]████[black]██[/black][white]██████████[black]██[/black][white]██████[/white][bright_black]████[/bright_black]
+   [bright_black]██[/bright_black][white]████[black]██[/black][white]██████████[black]██[/black][white]████████[/white][bright_black]██[/bright_black][bright_black]██[/bright_black]
+  [bright_black]██[/bright_black][white]██████████████████████████[/white][bright_black]██[/bright_black]
+  [bright_black]██[/bright_black][white]████[/white][cyan]...[/cyan][white]████████████████[/white][bright_black]████[/bright_black]
+   [bright_black]██[/bright_black][white]████████████████████████[/white][bright_black]██[/bright_black]
+    [bright_black]████[/bright_black][white]████████████████[/white][bright_black]██████[/bright_black]
+      [bright_black]████████████████████████[/bright_black]
+    [bright_black]████[/bright_black]  [bright_black]████████████[/bright_black]  [bright_black]████[/bright_black]
+  [bright_cyan]~~~[/bright_cyan]    [bright_cyan]~~~~~~~~~~~~[/bright_cyan]    [bright_cyan]~~~[/bright_cyan]"""
 
-    WAVING = """
-        ▄▄▄▄
-    ████▀▀▀▀████  ~
-   ██  ●    ●  ██▄
-   ██    ◡◡◡    ███
-    ██▄▄▄▄▄▄▄███
-      ████████
-  ~~~~~~~~~~~~~~~~~~
-"""
+    WAVING = """                [bright_black]██████[/bright_black]
+        [bright_black]████████[/bright_black][white]██████[/white][bright_black]████[/bright_black]  [bright_cyan]~[/bright_cyan]
+      [bright_black]██[/bright_black][white]████████████████[/white][bright_black]████[/bright_black]
+    [bright_black]██[/bright_black][white]██████████████████████[/white][bright_black]██[/bright_black]
+   [bright_black]██[/bright_black][white]████[black]██[/black][white]██████████[black]██[/black][white]██████[/white][bright_black]████[/bright_black]
+   [bright_black]██[/bright_black][white]████[black]██[/black][white]██████████[black]██[/black][white]████████[/white][bright_black]██[/bright_black][bright_black]██[/bright_black]
+  [bright_black]██[/bright_black][white]██████████████████████████[/white][bright_black]██[/bright_black]
+  [bright_black]██[/bright_black][white]██[magenta]██[/magenta][white]████████████████████[/white][bright_black]████[/bright_black]
+   [bright_black]██[/bright_black][white]████████████████████████[/white][bright_black]██[/bright_black]
+    [bright_black]████[/bright_black][white]████████████████[/white][bright_black]██████[/bright_black]
+      [bright_black]████████████████████████[/bright_black]
+    [bright_black]████[/bright_black]  [bright_black]████████████[/bright_black]  [bright_black]████[/bright_black]
+  [bright_cyan]~~~[/bright_cyan]    [bright_cyan]~~~~~~~~~~~~[/bright_cyan]    [bright_cyan]~~~[/bright_cyan]"""
 
-    SLEEPING = """
-        ▄▄▄▄
-    ████▀▀▀▀████
-   ██  -    -  ██▄
-   ██    ~~~    ███
-    ██▄▄▄▄▄▄▄███
-      ████████      zzz
-  ~~~~~~~~~~~~~~~~~~
-"""
+    SLEEPING = """                [bright_black]██████[/bright_black]
+        [bright_black]████████[/bright_black][white]██████[/white][bright_black]████[/bright_black]
+      [bright_black]██[/bright_black][white]████████████████[/white][bright_black]████[/bright_black]
+    [bright_black]██[/bright_black][white]██████████████████████[/white][bright_black]██[/bright_black]
+   [bright_black]██[/bright_black][white]████[bright_black]-[/bright_black][white]███████████[bright_black]-[/bright_black][white]██████[/white][bright_black]████[/bright_black]
+   [bright_black]██[/bright_black][white]██████████████████████████[/white][bright_black]██[/bright_black][bright_black]██[/bright_black]
+  [bright_black]██[/bright_black][white]██████████████████████████[/white][bright_black]██[/bright_black]
+  [bright_black]██[/bright_black][white]████[cyan]~~~[/cyan][white]████████████████[/white][bright_black]████[/bright_black]
+   [bright_black]██[/bright_black][white]████████████████████████[/white][bright_black]██[/bright_black]
+    [bright_black]████[/bright_black][white]████████████████[/white][bright_black]██████[/bright_black]
+      [bright_black]████████████████████████[/bright_black]      [dim]zzz[/dim]
+    [bright_black]████[/bright_black]  [bright_black]████████████[/bright_black]  [bright_black]████[/bright_black]
+  [bright_cyan]~~~[/bright_cyan]    [bright_cyan]~~~~~~~~~~~~[/bright_cyan]    [bright_cyan]~~~[/bright_cyan]"""
 
     @classmethod
     def get_pose(cls, pose: MascotPose = MascotPose.HAPPY) -> str:
@@ -83,10 +101,11 @@ class SealMascot:
 
         Args:
             pose: Desired mascot pose
-            color: Rich color tag (cyan, yellow, green, etc.)
+            color: Rich color tag (cyan, yellow, green, etc.) - applied as outer border color
 
         Returns:
-            Colored ASCII art string
+            Colored ASCII art string with embedded Rich markup
         """
-        art = cls.get_pose(pose)
-        return f"[{color}]{art}[/{color}]"
+        # Note: The seal already has embedded Rich color markup
+        # The color parameter is used for the panel border, not the seal itself
+        return cls.get_pose(pose)
