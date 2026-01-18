@@ -4,6 +4,9 @@ orchestrator:
   debug: false
   working_directory: "./.orchestrator/workspace"  # Isolated workspace for Agent operations (Phase 3.5)
 
+# Execution Mode (Phase 6A)
+mode: "execute"  # Current execution mode: ask, plan, execute
+
 llm:
   provider: "anthropic"
   anthropic:

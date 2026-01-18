@@ -920,8 +920,13 @@ class Orchestrator:
                         if hasattr(block, "type") and block.type == "text":
                             text_content.append(block.text)
 
-                    result = "\n".join(text_content) if text_content else "Task completed"
-                    return result
+                    # UX Fix: In streaming mode, thinking text was already displayed
+                    # Return empty to avoid duplication in Task Complete block
+                    if use_live_display and reasoning_text:
+                        return ""  # Empty result prevents duplicate display
+                    else:
+                        result = "\n".join(text_content) if text_content else "Task completed"
+                        return result
 
                 elif response.stop_reason == "tool_use":
                     # Add assistant message with tool_use blocks to history
