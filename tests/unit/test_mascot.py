@@ -11,9 +11,10 @@ class TestSealMascot:
     def test_get_pose_happy(self):
         """Test getting happy pose."""
         art = SealMascot.get_pose(MascotPose.HAPPY)
-        assert "°     °" in art  # Eyes
-        assert "<" in art  # Nose
-        assert "~~~" in art  # Mouth and water
+        assert "●    ●" in art  # Eyes (block art style)
+        assert "◡◡◡" in art  # Happy mouth
+        assert "~~~" in art  # Water waves
+        assert "██" in art  # Block characters for body
 
     def test_get_pose_thinking(self):
         """Test getting thinking pose."""
@@ -28,8 +29,9 @@ class TestSealMascot:
     def test_get_pose_sleeping(self):
         """Test getting sleeping pose."""
         art = SealMascot.get_pose(MascotPose.SLEEPING)
-        assert "-     -" in art  # Closed eyes
+        assert "-    -" in art  # Closed eyes (block art style)
         assert "zzz" in art  # Sleep indicator
+        assert "██" in art  # Block characters for body
 
     def test_get_colored_pose(self):
         """Test getting colored pose."""
