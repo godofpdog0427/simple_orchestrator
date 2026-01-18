@@ -46,6 +46,9 @@ class DisplayHook(Hook):
         self.is_streaming_display = hasattr(self.display, 'append_thinking')
         self.is_live_display = hasattr(self.display, 'start_live') and not self.is_streaming_display
 
+        # Track last TODO state to avoid redundant displays
+        self._last_todo_hash: str | None = None
+
     async def execute(self, context: HookContext) -> HookResult:
         """
         Display event information.
@@ -216,23 +219,33 @@ class DisplayHook(Hook):
         if tool_name == "todo_list" and self.show_todos and success and result_data:
             todos = result_data.get("todos", [])
             if todos:
-                # Convert dict todos to TodoItem-like objects for display
-                from orchestrator.tasks.models import TodoItem
+                # Calculate hash of TODO state to detect changes
+                import hashlib
+                import json
+                todo_state = json.dumps(todos, sort_keys=True)
+                todo_hash = hashlib.md5(todo_state.encode()).hexdigest()
 
-                todo_items = []
-                for todo_dict in todos:
-                    if isinstance(todo_dict, dict):
-                        todo_items.append(
-                            TodoItem(
-                                content=todo_dict.get("content", ""),
-                                status=todo_dict.get("status", "pending"),
-                                active_form=todo_dict.get("active_form", ""),
+                # Only display if TODO state changed
+                if todo_hash != self._last_todo_hash:
+                    self._last_todo_hash = todo_hash
+
+                    # Convert dict todos to TodoItem-like objects for display
+                    from orchestrator.tasks.models import TodoItem
+
+                    todo_items = []
+                    for todo_dict in todos:
+                        if isinstance(todo_dict, dict):
+                            todo_items.append(
+                                TodoItem(
+                                    content=todo_dict.get("content", ""),
+                                    status=todo_dict.get("status", "pending"),
+                                    active_form=todo_dict.get("active_form", ""),
+                                )
                             )
-                        )
-                if todo_items:
-                    # Update TODO zone (works for all display managers)
-                    self.display.show_todo_status(todo_items)
-                    return  # Don't show regular tool result for todo_list
+                    if todo_items:
+                        # Update TODO zone (works for all display managers)
+                        self.display.show_todo_status(todo_items)
+                return  # Don't show regular tool result for todo_list (changed or not)
 
         # Skip regular tool results if using live display (handled in reasoning loop)
         if self.is_live_display:
