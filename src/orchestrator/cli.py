@@ -75,8 +75,14 @@ async def _run_interactive(config: dict) -> None:
     try:
         while True:
             try:
-                # Get user input (simple async prompt)
-                user_input = await session.prompt_async("orchestrator> ")
+                # Get current mode for prompt indicator (Phase 6A+)
+                mode_indicator = ""
+                if orchestrator.mode_manager:
+                    mode = orchestrator.mode_manager.current_mode
+                    mode_indicator = f" [{mode.value.upper()}]"
+
+                # Get user input with mode indicator
+                user_input = await session.prompt_async(f"orchestrator{mode_indicator}> ")
 
                 if not user_input.strip():
                     continue
@@ -85,6 +91,56 @@ async def _run_interactive(config: dict) -> None:
                     if Confirm.ask("Are you sure you want to exit?"):
                         break
                     continue
+
+                # Phase 6A+: Handle slash commands
+                if user_input.startswith("/"):
+                    command_parts = user_input[1:].split()
+                    command = command_parts[0].lower() if command_parts else ""
+
+                    if command == "mode":
+                        if len(command_parts) < 2:
+                            console.print("[yellow]Usage: /mode <ask|plan|execute>[/yellow]")
+                            continue
+
+                        mode_str = command_parts[1].lower()
+                        try:
+                            from orchestrator.modes.models import ExecutionMode
+
+                            mode = ExecutionMode(mode_str)
+                            orchestrator.set_mode(mode)
+                            console.print(f"[green]✓ Switched to {mode.value.upper()} mode[/green]")
+                        except ValueError:
+                            console.print(
+                                f"[red]Invalid mode: {mode_str}. Use: ask, plan, or execute[/red]"
+                            )
+                        continue
+
+                    elif command == "session":
+                        # Show session info
+                        if orchestrator.mode_manager:
+                            mode = orchestrator.mode_manager.current_mode
+                            console.print(f"[cyan]Current Mode:[/cyan] {mode.value.upper()}")
+                        if orchestrator.workspace:
+                            console.print(
+                                f"[cyan]Session ID:[/cyan] {orchestrator.workspace.session_id}"
+                            )
+                        continue
+
+                    elif command == "help":
+                        console.print(
+                            """[cyan]Available Commands:[/cyan]
+  /mode <ask|plan|execute>  - Switch execution mode
+  /session                   - Show current session info
+  /help                      - Show this help message
+  exit, quit                 - Exit orchestrator
+"""
+                        )
+                        continue
+
+                    else:
+                        console.print(f"[yellow]Unknown command: /{command}[/yellow]")
+                        console.print("[yellow]Type /help for available commands[/yellow]")
+                        continue
 
                 # NEW (Phase 5B): Add user message to workspace conversation
                 if orchestrator.workspace:

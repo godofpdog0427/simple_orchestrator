@@ -2,9 +2,12 @@
 
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 from orchestrator.tasks.models import Task, TaskStatus
+
+if TYPE_CHECKING:
+    from orchestrator.modes.models import ExecutionMode
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +33,12 @@ class Orchestrator:
         self.hook_engine: Optional[Any] = None
         self.skill_registry: Optional[Any] = None  # Phase 4A
         self.subagent_manager: Optional[Any] = None  # Phase 4B
-        self.cache_manager: Optional[Any] = None  # Phase 5
-        self.display_manager: Optional[Any] = None  # Phase 5B streaming display
+        self.cache_manager: Optional[Any] = None  # Phase 5A
+        self.display_manager: Optional[Any] = None  # Phase 2.6 streaming display
         self.workspace_manager: Optional[Any] = None  # Phase 5B workspace
         self.workspace: Optional[Any] = None  # Phase 5B workspace state
         self.summarizer: Optional[Any] = None  # Phase 5B task summarizer
+        self.mode_manager: Optional[Any] = None  # Phase 6A execution mode
 
         # Setup logging
         self._setup_logging()
@@ -216,6 +220,15 @@ class Orchestrator:
         self.skill_registry = SkillRegistry(skill_config)
         await self.skill_registry.initialize()
 
+        # Initialize mode manager (Phase 6A)
+        from orchestrator.modes.manager import ModeManager
+        from orchestrator.modes.models import ExecutionMode
+
+        default_mode_str = self.config.get("mode", "execute")
+        default_mode = ExecutionMode(default_mode_str)
+        self.mode_manager = ModeManager(initial_mode=default_mode)
+        logger.info(f"Mode manager initialized in {default_mode.value} mode")
+
         # Initialize subagent manager (Phase 4B)
         subagent_config = self.config.get("subagents", {})
         # Pass base config for subagent orchestrators
@@ -299,6 +312,19 @@ class Orchestrator:
         """
         return Orchestrator(config)
 
+    def set_mode(self, mode: "ExecutionMode") -> None:
+        """
+        Change execution mode (Phase 6A).
+
+        Args:
+            mode: The new execution mode
+        """
+        if not self.mode_manager:
+            raise RuntimeError("Mode manager not initialized")
+
+        self.mode_manager.set_mode(mode)
+        logger.info(f"Switched to {mode.value} mode")
+
     async def run(self) -> None:
         """
         Main orchestrator execution loop.
@@ -330,7 +356,7 @@ class Orchestrator:
 
     async def process_input(self, user_input: str) -> str:
         """
-        Process user input in interactive mode.
+        Process user input in interactive mode based on execution mode.
 
         Args:
             user_input: User's input string
@@ -338,22 +364,132 @@ class Orchestrator:
         Returns:
             Response string
         """
+        from orchestrator.modes.models import ExecutionMode
+
         try:
-            # Create task from user input
+            # Get current mode (default to EXECUTE if mode manager not initialized)
+            current_mode = (
+                self.mode_manager.current_mode
+                if self.mode_manager
+                else ExecutionMode.EXECUTE
+            )
+
+            # Dispatch to mode-specific handler
+            if current_mode == ExecutionMode.ASK:
+                return await self._process_ask_mode(user_input)
+            elif current_mode == ExecutionMode.PLAN:
+                return await self._process_plan_mode(user_input)
+            else:
+                return await self._process_execute_mode(user_input)
+
+        except Exception as e:
+            logger.error(f"Error processing input: {e}", exc_info=True)
+            return f"Error: {e}"
+
+    async def _process_ask_mode(self, user_input: str) -> str:
+        """
+        Process input in ASK mode - Q&A without task persistence.
+
+        Args:
+            user_input: User's question
+
+        Returns:
+            Answer to the question
+        """
+        logger.info("Processing in ASK mode (Q&A)")
+
+        # Create temporary task (not persisted to TaskManager)
+        temp_task = Task(
+            title=user_input[:100],
+            description=user_input,
+            status=TaskStatus.IN_PROGRESS,
+        )
+
+        # Build context and execute reasoning loop
+        context = self._build_context(temp_task)
+        result = await self._reasoning_loop(temp_task, context)
+
+        return result or "I've processed your question."
+
+    async def _process_plan_mode(self, user_input: str) -> str:
+        """
+        Process input in PLAN mode - Create plan without execution.
+
+        Args:
+            user_input: Planning request
+
+        Returns:
+            Plan summary with tasks and todos
+        """
+        logger.info("Processing in PLAN mode (Planning)")
+
+        # Create planning task
+        planning_task = Task(
+            title=f"[PLAN] {user_input[:80]}",
+            description=user_input,
+            status=TaskStatus.PENDING,
+        )
+
+        # Add to TaskManager for persistence
+        planning_task = await self.task_manager.create_task(planning_task)
+        logger.info(f"Created planning task: {planning_task.id}")
+
+        # Execute planning task (LLM may call task_decompose to create subtasks)
+        await self._execute_task(planning_task)
+
+        # Get updated task with results
+        updated_task = await self.task_manager.get_task(planning_task.id)
+
+        # Build and return plan summary
+        if updated_task:
+            summary = await self._build_plan_summary(updated_task)
+            return summary
+        else:
+            return "Planning task completed but could not retrieve results."
+
+    async def _process_execute_mode(self, user_input: str) -> str:
+        """
+        Process input in EXECUTE mode - Execute tasks.
+
+        Args:
+            user_input: Execution request
+
+        Returns:
+            Execution results
+        """
+        logger.info("Processing in EXECUTE mode (Execution)")
+
+        # Check for pending tasks from PLAN mode
+        pending_tasks = await self.task_manager.list_tasks(status=TaskStatus.PENDING)
+
+        # Check if user wants to execute pending tasks
+        execute_keywords = ["execute", "start", "run", "開始", "執行", "运行"]
+        should_execute_pending = any(
+            keyword in user_input.lower() for keyword in execute_keywords
+        )
+
+        if pending_tasks and should_execute_pending:
+            # Execute all pending tasks
+            logger.info(f"Executing {len(pending_tasks)} pending tasks")
+            return await self._execute_all_pending_tasks()
+        else:
+            # Create and execute new task directly
             task = Task(
-                title=user_input[:100],  # Truncate long inputs for title
+                title=user_input[:100],
                 description=user_input,
                 status=TaskStatus.PENDING,
             )
 
-            # Add task to manager
             task = await self.task_manager.create_task(task)
             logger.info(f"Created task: {task.id}")
 
             # Execute task
             await self._execute_task(task)
 
-            # Get result
+            # Execute subtasks if any were created
+            await self._execute_subtasks_recursive(task.id)
+
+            # Get final result
             updated_task = await self.task_manager.get_task(task.id)
 
             if updated_task and updated_task.status == TaskStatus.COMPLETED:
@@ -361,11 +497,7 @@ class Orchestrator:
             elif updated_task and updated_task.status == TaskStatus.FAILED:
                 return f"Task failed: {updated_task.error}"
             else:
-                return "Task status unknown"
-
-        except Exception as e:
-            logger.error(f"Error processing input: {e}", exc_info=True)
-            return f"Error: {e}"
+                return "Task execution status unknown"
 
     async def _execute_task(self, task: Task) -> None:
         """
@@ -463,10 +595,19 @@ class Orchestrator:
         Returns:
             Context dictionary
         """
+        # Get all tool schemas
+        all_tool_schemas = self.tool_registry.get_tool_schemas() if self.tool_registry else []
+
+        # Phase 6A: Filter tools based on execution mode
+        if self.mode_manager:
+            tool_schemas = self.mode_manager.filter_tool_schemas(all_tool_schemas)
+        else:
+            tool_schemas = all_tool_schemas
+
         context = {
             "task": task,
             "task_description": task.description or task.title,  # Phase 4A: for skill matching
-            "tools": self.tool_registry.get_tool_schemas() if self.tool_registry else [],
+            "tools": tool_schemas,
             "conversation_history": [],
             "workspace_context": None,  # Phase 5B: Workspace context
         }
@@ -522,6 +663,171 @@ class Orchestrator:
                 context_parts.append(f"{role_label}: {content[:200]}...")
 
         return "\n".join(context_parts) if context_parts else ""
+
+    async def _build_plan_summary(self, planning_task: Task) -> str:
+        """
+        Build a summary of the planning task with subtasks and todos.
+
+        Args:
+            planning_task: The completed planning task
+
+        Returns:
+            Formatted plan summary
+        """
+        summary_parts = []
+        summary_parts.append(f"Plan: {planning_task.title}")
+        summary_parts.append("=" * 60)
+
+        # Add todo list if present
+        if planning_task.todo_list:
+            summary_parts.append("\n📋 TODO List:")
+            for i, todo_item in enumerate(planning_task.todo_list, 1):
+                status_emoji = "✓" if todo_item.status == "completed" else "○"
+                summary_parts.append(f"  {i}. {status_emoji} {todo_item.content}")
+
+        # Get subtasks created by task_decompose
+        subtasks = await self.task_manager.list_tasks(parent_id=planning_task.id)
+        if subtasks:
+            summary_parts.append(f"\n🔨 Subtasks Created ({len(subtasks)}):")
+            for i, subtask in enumerate(subtasks, 1):
+                deps = (
+                    f" [depends on: {', '.join(subtask.depends_on)}]"
+                    if subtask.depends_on
+                    else ""
+                )
+                summary_parts.append(
+                    f"  {i}. {subtask.title} ({subtask.priority.value}){deps}"
+                )
+
+        # Add suggestion to switch to EXECUTE mode
+        summary_parts.append("\n" + "=" * 60)
+        summary_parts.append(
+            "✨ Plan complete! To execute, switch to EXECUTE mode with: /mode execute"
+        )
+
+        return "\n".join(summary_parts)
+
+    async def _execute_all_pending_tasks(self) -> str:
+        """
+        Execute all pending tasks in dependency order.
+
+        Returns:
+            Execution summary
+        """
+        pending_tasks = await self.task_manager.list_tasks(status=TaskStatus.PENDING)
+
+        if not pending_tasks:
+            return "No pending tasks to execute."
+
+        logger.info(f"Executing {len(pending_tasks)} pending tasks")
+        executed_count = 0
+        failed_count = 0
+
+        # Get executable tasks in dependency order
+        while pending_tasks:
+            # Find a task with no unsatisfied dependencies
+            executable_task = None
+            for task in pending_tasks:
+                if await self._are_dependencies_met(task):
+                    executable_task = task
+                    break
+
+            if not executable_task:
+                # No executable tasks found - check for circular dependencies
+                logger.warning("No executable tasks found - possible circular dependency")
+                break
+
+            # Execute the task
+            try:
+                await self._execute_task(executable_task)
+
+                # Execute its subtasks recursively
+                await self._execute_subtasks_recursive(executable_task.id)
+
+                executed_count += 1
+            except Exception as e:
+                logger.error(f"Failed to execute task {executable_task.id}: {e}")
+                failed_count += 1
+
+            # Refresh pending tasks list
+            pending_tasks = await self.task_manager.list_tasks(status=TaskStatus.PENDING)
+
+        return (
+            f"Executed {executed_count} tasks successfully. "
+            f"{failed_count} tasks failed. "
+            f"{len(pending_tasks)} tasks remain pending."
+        )
+
+    async def _execute_subtasks_recursive(self, parent_id: str) -> None:
+        """
+        Recursively execute all subtasks of a parent task.
+
+        Args:
+            parent_id: ID of the parent task
+        """
+        # Get all subtasks
+        subtasks = await self.task_manager.list_tasks(parent_id=parent_id)
+
+        if not subtasks:
+            return
+
+        logger.info(f"Executing {len(subtasks)} subtasks of {parent_id}")
+
+        for subtask in subtasks:
+            if subtask.status == TaskStatus.PENDING:
+                # Check if dependencies are met
+                if await self._are_dependencies_met(subtask):
+                    # Execute subtask with isolated context
+                    await self._execute_task(subtask)
+
+                    # Recursively execute its subtasks
+                    await self._execute_subtasks_recursive(subtask.id)
+                else:
+                    logger.info(
+                        f"Subtask {subtask.id} blocked by dependencies, skipping"
+                    )
+
+    async def _are_dependencies_met(self, task: Task) -> bool:
+        """
+        Check if all dependencies of a task are completed.
+
+        Args:
+            task: Task to check
+
+        Returns:
+            True if all dependencies are met, False otherwise
+        """
+        if not task.depends_on:
+            return True
+
+        for dep_id in task.depends_on:
+            dep_task = await self.task_manager.get_task(dep_id)
+            if not dep_task or dep_task.status != TaskStatus.COMPLETED:
+                return False
+
+        return True
+
+    async def _get_dependency_results(self, dependency_ids: list[str]) -> dict[str, Any]:
+        """
+        Get results from dependency tasks.
+
+        Args:
+            dependency_ids: List of task IDs
+
+        Returns:
+            Dictionary mapping task ID to its result
+        """
+        results = {}
+
+        for dep_id in dependency_ids:
+            dep_task = await self.task_manager.get_task(dep_id)
+            if dep_task and dep_task.result:
+                results[dep_id] = {
+                    "title": dep_task.title,
+                    "result": dep_task.result,
+                }
+
+        return results
 
     async def _reasoning_loop(self, task: Task, context: dict[str, Any]) -> Any:
         """
@@ -716,6 +1022,11 @@ You have access to tools that will be provided via the API. Use them as needed t
         skill_instructions = self._get_skill_instructions(context)
         if skill_instructions:
             prompt += f"\n\n{skill_instructions}"
+
+        # Phase 6A: Inject mode-specific instructions
+        if self.mode_manager:
+            mode_suffix = self.mode_manager.get_mode_prompt_suffix()
+            prompt += f"\n{mode_suffix}"
 
         # Inject workspace context if available (Phase 5B)
         workspace_context = context.get("workspace_context")
