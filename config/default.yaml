@@ -168,3 +168,13 @@ cli:
   show_progress: true
   history_file: "./.orchestrator/history"
   max_history_lines: 1000
+
+# User preferences (Phase 6E)
+user:
+  # Username for welcome greeting (optional)
+  # If not set, uses $USER environment variable
+  username: null  # Set to your name or leave null
+
+  # Preferred mascot pose for welcome screen
+  # Options: happy, thinking, waving, sleeping
+  mascot_pose: "waving"

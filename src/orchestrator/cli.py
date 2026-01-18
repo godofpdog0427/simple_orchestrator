@@ -1,6 +1,7 @@
 """CLI interface for the orchestrator."""
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -46,77 +47,7 @@ async def _run_orchestrator(config: dict) -> None:
     await orchestrator.run()
 
 
-def _display_mode_guidelines(mode: str) -> None:
-    """Display mode-specific guidelines at startup (like Claude Code)."""
-    from rich.panel import Panel
-    from rich.markdown import Markdown
-
-    guidelines = {
-        "ask": """
-## ASK Mode - Q&A and Exploration
-
-**Purpose**: Research, exploration, and information gathering
-
-**What you can do**:
-- Ask questions about the codebase
-- Explore files and directories (bash + read-only)
-- Research documentation
-- Get explanations and recommendations
-
-**What you cannot do**:
-- Modify files or execute changes
-- Create tasks or subtasks
-
-**Typical use**: "What does this function do?", "Show me files in src/", "How is authentication implemented?"
-""",
-        "plan": """
-## PLAN Mode - Task Planning
-
-**Purpose**: Break down complex tasks into executable subtasks
-
-**What you can do**:
-- Read existing code to understand structure
-- Research best practices (web_fetch)
-- Create task decomposition with dependencies
-- Generate execution checklists
-
-**What you cannot do**:
-- Execute changes (file_write, bash execution)
-- Explore filesystem (use ASK mode for exploration)
-
-**Workflow**: PLAN mode creates the roadmap → Switch to EXECUTE mode to implement
-
-**Typical use**: "Plan how to implement user authentication", "Break down database migration into subtasks"
-""",
-        "execute": """
-## EXECUTE Mode - Full Execution
-
-**Purpose**: Execute tasks and make actual changes
-
-**What you can do**:
-- All tools available (file_write, bash, subagents, etc.)
-- Execute pending tasks from PLAN mode
-- Create and execute new tasks directly
-
-**What you should avoid**:
-- Creating new task decompositions (use PLAN mode first for complex tasks)
-
-**Workflow**: Simple tasks → execute directly. Complex tasks → PLAN first, then EXECUTE
-
-**Typical use**: "Create a hello.py file", "Execute the migration plan", "Run tests and fix failures"
-"""
-    }
-
-    guideline_text = guidelines.get(mode, "")
-    if guideline_text:
-        panel = Panel(
-            Markdown(guideline_text.strip()),
-            title=f"[bold cyan]Mode Guidelines: {mode.upper()}[/bold cyan]",
-            border_style="cyan",
-            padding=(1, 2),
-        )
-        console.print(panel)
-        console.print()  # Blank line after guidelines
+# Removed _display_mode_guidelines - replaced with WelcomeScreen class (Phase 6E)
 
 
 async def _run_interactive(config: dict) -> None:
@@ -124,6 +55,8 @@ async def _run_interactive(config: dict) -> None:
     from orchestrator.core.orchestrator import Orchestrator
     from orchestrator.display_stream import StreamingDisplayManager
     from orchestrator.display import set_display_manager
+    from orchestrator.cli.welcome import WelcomeScreen
+    from orchestrator.modes.models import ExecutionMode
 
     # Check if streaming display is enabled (default: true)
     use_streaming = config.get("cli", {}).get("use_streaming_display", True)
@@ -137,17 +70,37 @@ async def _run_interactive(config: dict) -> None:
     orchestrator = Orchestrator(config)
     await orchestrator.initialize()
 
-    # Display mode guidelines at startup (Phase 6A+++)
-    current_mode = orchestrator.mode_manager.current_mode.value if orchestrator.mode_manager else "execute"
-    _display_mode_guidelines(current_mode)
+    # NEW (Phase 6E): Create welcome screen builder
+    welcome = WelcomeScreen(console)
 
-    # Show welcome message with mode info
-    console.print(Panel(
-        f"[bold green]Orchestrator Interactive Mode[/bold green]\n"
-        f"Mode: [cyan]{current_mode.upper()}[/cyan] | "
-        f"Type [yellow]/help[/yellow] for commands | [yellow]/quit[/yellow] to exit",
-        border_style="green"
-    ))
+    # Get current mode
+    current_mode = orchestrator.mode_manager.current_mode if orchestrator.mode_manager else ExecutionMode.EXECUTE
+
+    # Get session info
+    session_name = orchestrator.current_session.name if orchestrator.current_session else None
+
+    # Get task progress (optional)
+    task_progress = None
+    if orchestrator.task_manager:
+        from orchestrator.tasks.models import TaskStatus
+        completed_tasks = await orchestrator.task_manager.list_tasks(status=TaskStatus.COMPLETED)
+        all_tasks = await orchestrator.task_manager.list_tasks()
+        if all_tasks:
+            task_progress = (len(completed_tasks), len(all_tasks))
+
+    # Get username from config or environment
+    username = config.get("user", {}).get("username") or os.environ.get("USER")
+
+    # Display welcome screen with mascot (Phase 6E)
+    welcome.display_welcome(
+        mode=current_mode,
+        session_name=session_name,
+        task_progress=task_progress,
+        username=username,
+    )
+
+    # Display mode guidelines (Phase 6E)
+    welcome.display_mode_guidelines(current_mode)
 
     # Setup prompt session with history
     history_file = config.get("cli", {}).get("history_file", "./.orchestrator/history")
