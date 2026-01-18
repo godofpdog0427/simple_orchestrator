@@ -2,8 +2,8 @@
 
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Last Updated**: 2026-01-16
-**Current Phase**: Phase 5A (Tool Result Caching - Completed)
+**Last Updated**: 2026-01-18
+**Current Phase**: Phase 5B Complete → Phase 6 Planning
 
 ---
 
@@ -11,7 +11,7 @@ This file provides comprehensive guidance to Claude Code (claude.ai/code) when w
 
 **READ THIS FIRST - MANDATORY RULES**
 
-This project uses a strict branch strategy to prevent catastrophic data loss:
+This project uses a strict branch strategy to prevent catastrophic data loss.
 
 ### Branch Structure
 
@@ -35,7 +35,7 @@ This project uses a strict branch strategy to prevent catastrophic data loss:
 ```bash
 # 1. Start from dev branch
 git checkout dev
-git pull origin dev  # Get latest changes
+git pull origin dev
 
 # 2. Create feature branch
 git checkout -b feature/your-feature-name
@@ -51,9 +51,6 @@ git push -u origin feature/your-feature-name
 git checkout dev
 git merge feature/your-feature-name
 git push origin dev
-
-# 6. Delete feature branch (optional)
-git branch -d feature/your-feature-name
 ```
 
 ### What You CAN Do
@@ -88,13 +85,7 @@ git checkout -b feature/your-feature
 git stash pop
 ```
 
-### Why This Matters
-
-This project was previously lost due to an accidental `/clear` command. The branch strategy ensures:
-- `main` always has stable, working code
-- All development happens in isolated feature branches
-- Only the human user controls what goes to production (`main`)
-- Claude Code cannot accidentally destroy the codebase
+**Full Git Workflow**: See [`docs/development/git-workflow.md`](docs/development/git-workflow.md)
 
 ---
 
@@ -109,7 +100,37 @@ This project was previously lost due to an accidental `/clear` command. The bran
 - **Extensible Tool System**: Register custom tools via classes, decorators, or YAML configs
 - **Subagent Spawning**: Delegate subtasks to specialized agents with resource constraints
 - **Skill-based Instructions**: Prompt-based skills (SKILL.md files) guide LLM behavior
+- **Workspace State**: Conversation memory enables continuity across tasks (Phase 5B)
 - **Human-in-the-Loop (HITL)**: Approve critical operations before execution
+
+### Technology Stack
+
+- **Python 3.12** with asyncio for non-blocking execution
+- **Anthropic Claude API** (native tool calling)
+- **Rich** TUI library for terminal display
+- **YAML** configuration with environment variable support
+
+### Directory Structure
+
+```
+simple_orchestrator/
+├── src/orchestrator/          # Core orchestrator code
+│   ├── core/                  # Orchestrator, ReAct loop
+│   ├── llm/                   # LLM client (Anthropic)
+│   ├── tools/                 # Tool system
+│   ├── tasks/                 # Task management
+│   ├── hooks/                 # Hook engine
+│   ├── skills/                # Skill registry
+│   ├── subagents/             # Subagent manager
+│   ├── workspace/             # Workspace state (Phase 5B)
+│   └── cli/                   # CLI interface
+├── tests/                     # Unit and integration tests
+├── config/                    # Configuration files
+├── docs/development/          # Detailed documentation
+└── user_extensions/           # User-defined tools/hooks/skills
+```
+
+---
 
 ## Quick Start
 
@@ -130,6 +151,9 @@ cp .env.example .env
 # Start orchestrator in interactive mode
 orchestrator chat
 
+# Test mode (isolated workspace)
+orchestrator test
+
 # Run with specific config
 orchestrator start --config config/custom.yaml
 
@@ -137,7 +161,7 @@ orchestrator start --config config/custom.yaml
 orchestrator task add "Analyze code and suggest improvements"
 ```
 
-### Testing
+### Development
 
 ```bash
 # Run all tests
@@ -149,2159 +173,298 @@ pytest --cov=orchestrator --cov-report=html
 # Run integration tests only
 pytest tests/integration/
 
-# Test orchestrator in isolated workspace (Phase 3.5)
-orchestrator test
+# Linting and formatting
+ruff check src/
+black src/
+mypy src/
 ```
 
 ---
 
-## Theoretical Foundation
+## Core Architecture
 
-### Architecture Philosophy
+### Design Principles
 
 This orchestrator is built on proven AI agent design patterns:
 
-#### 1. BDI (Belief-Desire-Intention) Model
+1. **Async-First**: All I/O operations use `async/await` for non-blocking execution
+2. **Hook-Driven Extensibility**: Every key action triggers lifecycle hooks
+3. **Declarative Tools**: Tools describe capabilities; LLM decides usage
+4. **Prompt-Based Skills**: Skills are instructions (SKILL.md), not code workflows
+5. **Subagent Isolation**: Child agents have limited context and resource budgets
+6. **Human Oversight**: Critical operations require explicit approval (HITL)
 
-- **Beliefs**: Task state, tool registry, conversation history, skill library
-- **Desires**: User-defined tasks and goals
-- **Intentions**: Active task execution, tool selection, subagent delegation
-
-#### 2. ReAct (Reasoning and Acting) Pattern
-
-The LLM alternates between:
-- **Reasoning**: Analyzing the current state, planning next steps
-- **Acting**: Using tools, spawning subagents, updating task state
-
-#### 3. Design Principles
-
-- **Async-First**: All I/O operations use `async/await` for non-blocking execution
-- **Hook-Driven**: Every key action triggers lifecycle hooks for extensibility
-- **Declarative Tools**: Tools describe capabilities; LLM decides usage
-- **Prompt-Based Skills**: Skills are instructions (SKILL.md), not code workflows
-- **Subagent Isolation**: Child agents have limited context and resource budgets
-- **Human Oversight**: Critical operations require explicit approval (HITL)
-
----
-
-## Architecture Deep Dive
-
-### Component Overview
+### Two-Layer State System (Phase 5B)
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         CLI Layer                           │
-│  (click commands, interactive prompt, config loading)       │
-└────────────────────────┬────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                    Workspace Layer                      │
+│  (Long-term context, retained across tasks)            │
+│                                                          │
+│  - workspace_conversation: list[Message]                │
+│  - task_summaries: deque[TaskSummary] (max 10)         │
+│  - user_preferences: dict                               │
+│                                                          │
+│  Persisted in: .orchestrator/workspace_state/{id}.json  │
+└─────────────────────────────────────────────────────────┘
                          │
-┌────────────────────────▼────────────────────────────────────┐
-│                   Orchestrator Core                         │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ Hook Engine │  │ Task Manager │  │ LLM Client   │      │
-│  │ (lifecycle) │  │ (queue/deps) │  │ (Anthropic)  │      │
-│  └─────────────┘  └──────────────┘  └──────────────┘      │
-│                                                              │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │Tool Registry│  │Skill Registry│  │Subagent Mgr  │      │
-│  │(bash, file) │  │(SKILL.md)    │  │(spawning)    │      │
-│  └─────────────┘  └──────────────┘  └──────────────┘      │
-└─────────────────────────────────────────────────────────────┘
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│                     Task Layer                          │
+│  (Short-term execution context)                         │
+│                                                          │
+│  - conversation_history: list[dict]                     │
+│  - Current task goal and tool results                   │
+│                                                          │
+│  Lifecycle: Created per task, cleaned after completion  │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### 1. LLM Integration (Anthropic)
-
-**CRITICAL**: This orchestrator uses Anthropic's **native tool calling API**. Do NOT use text-based tool parsing.
-
-#### Correct Tool Calling Flow
-
-1. **Tool Registration**: Tools converted to Anthropic schema
-   ```python
-   {
-       "name": "bash",
-       "description": "Execute bash commands",
-       "input_schema": {
-           "type": "object",
-           "properties": {
-               "command": {"type": "string", "description": "..."}
-           },
-           "required": ["command"]
-       }
-   }
-   ```
-
-2. **API Call**: Tools passed via `tools` parameter
-   ```python
-   response = await client.messages.create(
-       model="claude-3-5-sonnet-20241022",
-       messages=conversation_history,
-       tools=tool_schemas  # List of tool definitions
-   )
-   ```
-
-3. **Response Handling**: Parse `stop_reason`
-   - `stop_reason == "end_turn"`: Extract text content
-   - `stop_reason == "tool_use"`: Process `tool_use` blocks
-
-4. **Tool Execution**: Execute tools and return results
-   ```python
-   tool_results = []
-   for block in response.content:
-       if block.type == "tool_use":
-           result = await execute_tool(block.name, block.input)
-           tool_results.append({
-               "type": "tool_result",
-               "tool_use_id": block.id,  # CRITICAL: Match ID
-               "content": str(result)
-           })
-
-   # Add as user message
-   conversation_history.append({
-       "role": "user",
-       "content": tool_results
-   })
-   ```
-
-#### Key Files
-
-- `src/orchestrator/llm/client.py` - LLM abstraction layer
-- `src/orchestrator/llm/providers/anthropic.py` - Anthropic provider (future)
-- `src/orchestrator/core/orchestrator.py:_reasoning_loop()` - Main ReAct loop
-
-#### Provider Abstraction (Future)
-
-Currently only Anthropic is supported. Future providers:
-- OpenAI (GPT-4)
-- Google (Gemini)
-- Local models (Ollama)
-
-Each provider will implement `LLMProvider` ABC with standardized `chat()` interface.
-
-### 2. Hook System
-
-**Status**: Base classes implemented (Phase 1), engine not active yet (Phase 2).
-
-#### Hook Lifecycle Events
-
-| Event | When Triggered | Context Provided |
-|-------|---------------|------------------|
-| `orchestrator.start` | Orchestrator initialization | config |
-| `orchestrator.stop` | Orchestrator shutdown | final_state |
-| `task.created` | Task added to queue | task |
-| `task.started` | Task execution begins | task, agent_context |
-| `task.completed` | Task succeeds | task, result |
-| `task.failed` | Task fails | task, error |
-| `tool.before_execute` | Before tool runs | tool_name, input |
-| `tool.after_execute` | After tool runs | tool_name, result |
-| `tool.requires_approval` | Tool needs HITL | tool_name, input |
-| `subagent.spawned` | Subagent created | parent_task, child_task |
-| `subagent.completed` | Subagent finishes | parent_task, result |
-| `llm.before_call` | Before LLM API call | messages, tools |
-| `llm.after_call` | After LLM response | response, token_count |
-
-#### Hook Priority
-
-Hooks execute in priority order (lower number = higher priority):
-
-```yaml
-hooks:
-  - name: logging_hook
-    priority: 10
-    events: ["*"]  # All events
-
-  - name: hitl_approval
-    priority: 50
-    events: ["tool.requires_approval"]
-
-  - name: metrics_collector
-    priority: 100
-    events: ["task.completed", "task.failed"]
-```
-
-#### Hook Results
-
-Hooks can:
-- **Continue**: `HookResult(action="continue")`
-- **Block**: `HookResult(action="block", reason="...")`
-- **Modify**: `HookResult(action="continue", modified_context={...})`
-
-#### Built-in Hooks (Phase 2)
-
-1. **LoggingHook**: Logs all events to file
-2. **HITLHook**: Prompts user for approval on critical operations
-3. **MetricsHook**: Collects execution statistics
-4. **CachingHook**: Caches tool results for deduplication
-
-#### Custom Hook Example
-
-```python
-from orchestrator.hooks.base import Hook, HookContext, HookResult
-
-class CustomValidationHook(Hook):
-    name = "custom_validation"
-    priority = 20
-    events = ["task.started"]
-
-    async def execute(self, context: HookContext) -> HookResult:
-        task = context.data["task"]
-        if not task.description:
-            return HookResult(
-                action="block",
-                reason="Task must have description"
-            )
-        return HookResult(action="continue")
-```
-
-### 3. Task System
-
-#### Task Model
-
-```python
-@dataclass
-class Task:
-    id: str
-    title: str
-    description: str
-    status: TaskStatus  # PENDING, IN_PROGRESS, COMPLETED, FAILED
-    priority: TaskPriority  # LOW, NORMAL, HIGH, CRITICAL
-
-    # Hierarchy (Phase 3)
-    parent_id: Optional[str] = None
-    subtasks: list[str] = field(default_factory=list)
-
-    # Dependencies (Phase 3)
-    depends_on: list[str] = field(default_factory=list)
-    blocks: list[str] = field(default_factory=list)
-
-    # Execution
-    result: Optional[Any] = None
-    error: Optional[str] = None
-    retry_count: int = 0
-
-    # Metadata
-    created_at: datetime = field(default_factory=datetime.now)
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-```
-
-#### Task Lifecycle
-
-```
-PENDING → IN_PROGRESS → COMPLETED
-                     ↘ FAILED
-
-If retry enabled: FAILED → PENDING (up to max_retries)
-```
-
-#### Phase 1: Simple Queue
-
-- Tasks execute sequentially
-- No hierarchy or dependencies
-- `get_next_executable_task()` returns first PENDING task
-
-#### Phase 3: Hierarchical Tasks
-
-- Parent tasks spawn subtasks
-- Subtasks execute before parent completes
-- `get_next_executable_task()` respects:
-  - Dependencies: All tasks in `depends_on` must be COMPLETED
-  - Hierarchy: Subtasks execute before parent
-
-#### Task Manager API
-
-```python
-class TaskManager:
-    async def create_task(self, title: str, description: str, **kwargs) -> Task
-    async def get_task(self, task_id: str) -> Optional[Task]
-    async def update_task(self, task_id: str, **updates) -> Task
-    async def list_tasks(self, status: Optional[TaskStatus] = None) -> list[Task]
-    async def get_next_executable_task(self) -> Optional[Task]
-
-    # Hierarchy (Phase 3)
-    async def create_subtask(self, parent_id: str, **kwargs) -> Task
-    async def add_dependency(self, task_id: str, depends_on_id: str)
-```
-
-### 4. Tool System
-
-#### Tool Registration Methods
-
-##### 1. Class-Based (Complex Tools)
-
-```python
-from orchestrator.tools.base import Tool, ToolDefinition, ToolParameter, ToolResult
-
-class DatabaseQueryTool(Tool):
-    definition = ToolDefinition(
-        name="database_query",
-        description="Execute SQL query on database",
-        parameters=[
-            ToolParameter(
-                name="query",
-                type="string",
-                description="SQL query to execute",
-                required=True
-            ),
-            ToolParameter(
-                name="db_name",
-                type="string",
-                description="Database name",
-                required=False,
-                default="default"
-            )
-        ],
-        requires_approval=True  # HITL for destructive queries
-    )
-
-    def __init__(self, connection_pool):
-        self.pool = connection_pool
-
-    async def execute(self, query: str, db_name: str = "default") -> ToolResult:
-        try:
-            async with self.pool.acquire() as conn:
-                result = await conn.fetch(query)
-            return ToolResult(success=True, data=result)
-        except Exception as e:
-            return ToolResult(success=False, error=str(e))
-```
-
-##### 2. Decorator-Based (Simple Functions)
-
-```python
-from orchestrator.tools.base import tool
-
-@tool(name="word_count", requires_approval=False)
-async def word_count(text: str) -> int:
-    """Count words in the given text."""
-    return len(text.split())
-
-@tool(name="sentiment_analysis")
-async def analyze_sentiment(text: str) -> dict:
-    """Analyze sentiment of text."""
-    # Tool implementation
-    return {"sentiment": "positive", "score": 0.85}
-```
-
-##### 3. YAML-Based (User Extensions)
-
-```yaml
-# user_extensions/tools/custom.yaml
-tools:
-  - name: fetch_weather
-    description: Fetch current weather for a location
-    type: http_request
-    parameters:
-      - name: location
-        type: string
-        required: true
-    config:
-      method: GET
-      url: "https://api.weather.com/v1/current?location={location}"
-      headers:
-        API-Key: "${WEATHER_API_KEY}"
-    requires_approval: false
-```
-
-#### Built-in Tools
-
-1. **BashTool**: Execute shell commands
-   - Safety: Blocked command patterns (rm -rf /, fork bombs)
-   - Timeout: Configurable (default 30s)
-   - Working directory tracking
-
-2. **FileReadTool**: Read file contents
-   - Size limit: Configurable (default 10MB)
-   - Encoding: UTF-8 with fallback
-
-3. **FileWriteTool**: Write/create files
-   - Auto-create parent directories
-   - Atomic writes (temp file + rename)
-
-4. **FileDeleteTool**: Delete files/directories
-   - Requires approval for directories
-   - Safety checks (no system paths)
-
-#### Tool Registry
-
-```python
-class ToolRegistry:
-    def register(self, tool: Tool)
-    def get(self, name: str) -> Optional[Tool]
-    def list_tools(self) -> list[ToolDefinition]
-    def to_anthropic_schema(self) -> list[dict]  # Convert to API format
-```
-
-#### Anthropic Schema Conversion
-
-```python
-def _convert_to_anthropic_schema(self, tool_def: ToolDefinition) -> dict:
-    properties = {}
-    required = []
-
-    for param in tool_def.parameters:
-        properties[param.name] = {
-            "type": param.type,
-            "description": param.description
-        }
-        if param.required:
-            required.append(param.name)
-
-    return {
-        "name": tool_def.name,
-        "description": tool_def.description,
-        "input_schema": {
-            "type": "object",
-            "properties": properties,
-            "required": required
-        }
-    }
-```
-
-### 5. Skill System
-
-#### Design Philosophy
-
-**Skills are prompts, not code.** A SKILL.md file contains:
-- **Instructions**: How to approach a task
-- **Best practices**: Domain-specific guidelines
-- **Examples**: Template usage patterns
-- **Safety checks**: Common pitfalls to avoid
-
-The LLM reads the skill and uses available tools to achieve the goal.
-
-#### SKILL.md Format
-
-```markdown
----
-name: code_review
-description: "Review code for bugs, style, and security issues"
-tools_required: [file_read]
-version: "1.0.0"
-tags: [code, quality, security]
----
-
-# Code Review
-
-## Overview
-Systematic code review focusing on correctness, security, style, and maintainability.
-
-## When to Use
-- Pull request review
-- Security audit
-- Code quality assessment
-
-## Review Checklist
-
-### 1. Correctness
-- [ ] Logic errors or edge cases
-- [ ] Null/undefined handling
-- [ ] Type mismatches
-
-### 2. Security
-- [ ] SQL injection vulnerabilities
-- [ ] XSS vulnerabilities
-- [ ] Authentication checks
-
-## Process
-1. Read all changed files
-2. Check each item in checklist
-3. Document findings with severity levels
-4. Suggest specific fixes
-
-## Example Output
-**File**: `auth.py:42`
-**Severity**: High
-**Issue**: Missing authentication check
-**Fix**: Add `@require_auth` decorator
-```
-
-#### Built-in Skills
-
-1. **code_edit**: Safe code modification patterns
-2. **code_review**: Code quality assessment
-3. **research**: Web research methodology
-4. **git_operations**: Git workflow best practices
-5. **file_management**: File organization patterns
-
-#### Skill Auto-Discovery (Phase 4)
-
-```python
-class SkillRegistry:
-    def __init__(self):
-        self._skills = {}
-        self._load_builtin_skills()
-        self._load_user_skills()
-
-    def _load_user_skills(self):
-        """Auto-discover skills from user_extensions/skills/*/SKILL.md"""
-        for skill_dir in Path("user_extensions/skills").glob("*/"):
-            skill_file = skill_dir / "SKILL.md"
-            if skill_file.exists():
-                skill = self._parse_skill(skill_file)
-                self.register(skill)
-```
-
-#### Using Skills in Tasks
-
-```python
-# User creates task with skill hint
-orchestrator task add "Review auth.py for security issues" --skill code_review
-
-# Orchestrator injects skill instructions into system prompt
-system_prompt = f"""
-You are an AI assistant with access to tools.
-
-Active Skill: Code Review
-{skill_content}
-
-Task: Review auth.py for security issues
-"""
-```
-
-### 6. Subagent System (Phase 4)
-
-#### Purpose
-
-Delegate complex subtasks to isolated child agents with:
-- Limited context (only parent task info)
-- Resource constraints (token budget, time limit)
-- Restricted tool access
-
-#### Spawning Subagents
-
-```python
-class SubagentManager:
-    async def spawn(
-        self,
-        parent_task: Task,
-        subtask: Task,
-        context: dict,
-        constraints: dict
-    ) -> SubagentHandle:
-        """
-        Spawn isolated subagent for subtask execution.
-
-        Constraints:
-            max_tokens: 50000 (default)
-            timeout_seconds: 300 (default)
-            allowed_tools: ["bash", "file_read"] (default: all)
-            skill: Optional skill to load
-        """
-        subagent = Orchestrator(
-            llm_client=self.llm_client,
-            config={
-                "max_tokens": constraints.get("max_tokens", 50000),
-                "allowed_tools": constraints.get("allowed_tools")
-            }
-        )
-
-        # Execute subtask in isolation
-        result = await asyncio.wait_for(
-            subagent.execute_task(subtask, context),
-            timeout=constraints.get("timeout_seconds", 300)
-        )
-
-        return SubagentHandle(task_id=subtask.id, result=result)
-```
-
-#### Communication Rules
-
-- **Parent → Child**: Only through task context (no direct calls)
-- **Child → Parent**: Only through task result
-- **Child ↔ Child**: No communication (isolated)
-
-#### Resource Limits
-
-```yaml
-subagents:
-  max_concurrent: 3  # Maximum parallel subagents
-  default_constraints:
-    max_tokens: 50000
-    timeout_seconds: 300
-    allowed_tools: ["bash", "file_read", "file_write"]
-```
-
-### 7. Human-in-the-Loop (HITL) (Phase 2)
-
-#### Approval Workflow
-
-1. Tool requires approval (`requires_approval=True`)
-2. Hook `tool.requires_approval` triggered
-3. HITL hook prompts user:
-   ```
-   Tool 'bash' requires approval:
-   Command: rm -rf old_logs/
-
-   Approve? [y/N]:
-   ```
-4. User response:
-   - `y`: Execution continues
-   - `n`: Execution blocked, alternative sought
-
-#### Approval Levels
-
-```yaml
-hitl:
-  approval_required:
-    - tool_name: bash
-      conditions:
-        - pattern: "rm -rf.*"
-        - pattern: "sudo.*"
-
-    - tool_name: file_delete
-      conditions:
-        - target_is_directory: true
-
-    - tool_name: database_query
-      conditions:
-        - query_type: ["DELETE", "DROP", "TRUNCATE"]
-```
-
-#### Auto-Approval (Advanced)
-
-```python
-class SmartHITLHook(Hook):
-    async def execute(self, context: HookContext) -> HookResult:
-        tool_name = context.data["tool_name"]
-        tool_input = context.data["input"]
-
-        # Check whitelist
-        if self._is_whitelisted(tool_name, tool_input):
-            return HookResult(action="continue")
-
-        # Prompt user
-        approved = await self._prompt_user(tool_name, tool_input)
-
-        if approved:
-            # Add to whitelist for future
-            self._add_to_whitelist(tool_name, tool_input)
-            return HookResult(action="continue")
-        else:
-            return HookResult(action="block", reason="User denied approval")
-```
-
-### 8. Configuration System
-
-#### Configuration Files
-
-```
-config/
-├── default.yaml       # Default configuration
-├── hooks.yaml         # Hook definitions
-├── schema.json        # JSON schema for validation
-└── local.yaml         # Local overrides (gitignored)
-```
-
-#### Complete Configuration Schema
-
-```yaml
-# config/default.yaml
-
-# LLM Provider Settings
-llm:
-  provider: anthropic  # anthropic, openai, google, local
-
-  anthropic:
-    model: claude-3-5-sonnet-20241022
-    api_key_env: ANTHROPIC_API_KEY  # Read from env var
-    max_tokens: 8192
-    temperature: 0.7
-
-  openai:  # Future
-    model: gpt-4-turbo
-    api_key_env: OPENAI_API_KEY
-
-# Tool Configuration
-tools:
-  # Built-in tools
-  bash:
-    enabled: true
-    timeout: 30
-    blocked_commands:
-      - "rm -rf /"
-      - ":(){ :|:& };:"  # Fork bomb
-      - "> /dev/sda"
-
-  file_read:
-    enabled: true
-    max_file_size: 10485760  # 10 MB
-
-  file_write:
-    enabled: true
-    create_dirs: true
-
-  file_delete:
-    enabled: true
-    requires_approval: true
-
-# Task Management
-tasks:
-  max_retries: 3
-  retry_delay: 5  # seconds
-  persistence_file: .orchestrator/tasks.json
-
-# Subagent Settings (Phase 4)
-subagents:
-  enabled: false
-  max_concurrent: 3
-  default_constraints:
-    max_tokens: 50000
-    timeout_seconds: 300
-    allowed_tools: ["bash", "file_read", "file_write"]
-
-# Hook Settings (Phase 2)
-hooks:
-  enabled: false
-  config_file: config/hooks.yaml
-
-# HITL Settings (Phase 2)
-hitl:
-  enabled: false
-  auto_approve_safe_tools: true
-  approval_timeout: 300  # seconds
-
-# Skill Settings
-skills:
-  builtin_path: src/orchestrator/skills/builtin
-  user_path: user_extensions/skills
-  auto_discover: true
-
-# Memory Settings (Phase 5)
-memory:
-  enabled: false
-  cross_session: false
-  embeddings_provider: local  # local, openai
-  vector_store: chroma
-
-# Caching Settings (Phase 5)
-cache:
-  enabled: false
-  tool_results: true
-  llm_responses: false
-  ttl: 3600  # seconds
-
-# Logging
-logging:
-  level: INFO  # DEBUG, INFO, WARNING, ERROR
-  file: .orchestrator/orchestrator.log
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-# Persistence
-persistence:
-  state_file: .orchestrator/state.json
-  auto_save: true
-  save_interval: 60  # seconds
-```
-
-#### Hook Configuration
-
-```yaml
-# config/hooks.yaml
-
-hooks:
-  - name: logging_hook
-    type: builtin  # builtin, custom, external
-    priority: 10
-    enabled: true
-    events: ["*"]
-    config:
-      log_file: .orchestrator/hooks.log
-
-  - name: hitl_approval
-    type: builtin
-    priority: 50
-    enabled: true
-    events: ["tool.requires_approval"]
-    config:
-      timeout: 300
-      auto_approve_patterns:
-        - tool: bash
-          command_regex: "^ls.*"
-        - tool: bash
-          command_regex: "^cat (?!.*\\.env).*"  # cat anything except .env
-
-  - name: metrics_collector
-    type: builtin
-    priority: 100
-    enabled: true
-    events:
-      - task.completed
-      - task.failed
-      - tool.after_execute
-    config:
-      output_file: .orchestrator/metrics.json
-
-  - name: custom_validator
-    type: custom
-    priority: 20
-    enabled: true
-    events: ["task.started"]
-    module: user_extensions.hooks.validator
-    class: CustomValidationHook
-```
-
-### 9. Error Handling & Retry
-
-#### Three-Level Retry Configuration
-
-```yaml
-# Global defaults (lowest priority)
-retry:
-  max_retries: 3
-  retry_delay: 5
-  backoff_multiplier: 2.0  # Exponential backoff
-
-# Tool-level overrides (medium priority)
-tools:
-  bash:
-    max_retries: 2  # Less retries for bash
-
-  file_read:
-    max_retries: 5  # More retries for file ops
-
-# Task-level overrides (highest priority)
-# Set programmatically:
-task = await task_manager.create_task(
-    title="Critical sync",
-    description="...",
-    max_retries=10
-)
-```
-
-#### Retry Logic
-
-```python
-async def execute_with_retry(
-    self,
-    task: Task,
-    context: dict
-) -> Any:
-    max_retries = task.max_retries or self.config["retry"]["max_retries"]
-    delay = self.config["retry"]["retry_delay"]
-    multiplier = self.config["retry"]["backoff_multiplier"]
-
-    for attempt in range(max_retries + 1):
-        try:
-            result = await self._reasoning_loop(task, context)
-            return result
-        except RetryableError as e:
-            if attempt == max_retries:
-                raise
-
-            wait_time = delay * (multiplier ** attempt)
-            logger.warning(f"Retry {attempt + 1}/{max_retries} after {wait_time}s: {e}")
-            await asyncio.sleep(wait_time)
-        except FatalError:
-            raise  # Don't retry fatal errors
-```
-
-#### Error Types
-
-```python
-class OrchestratorError(Exception):
-    """Base error"""
-
-class RetryableError(OrchestratorError):
-    """Errors that can be retried (API timeouts, rate limits)"""
-
-class FatalError(OrchestratorError):
-    """Errors that should not be retried (invalid input, auth failures)"""
-
-class ToolExecutionError(RetryableError):
-    """Tool failed but may succeed on retry"""
-
-class TaskValidationError(FatalError):
-    """Task is invalid and cannot be executed"""
-```
+### Key Components
+
+- **Orchestrator Core**: Main execution engine with ReAct loop
+- **LLM Client**: Anthropic provider with native tool calling API
+- **Tool Registry**: Manages builtin and custom tools
+- **Hook Engine**: Lifecycle event management
+- **Task Manager**: Hierarchical task queue with dependency resolution
+- **Skill Registry**: Auto-discovers and injects SKILL.md files
+- **Subagent Manager**: Spawns isolated child agents
+- **Workspace Manager**: Persists conversation state (Phase 5B)
+
+**Detailed Architecture**: See [`docs/development/architecture.md`](docs/development/architecture.md)
 
 ---
 
-## Implementation Status
+## Development Workflow
 
-### Phase 1: Core Foundation ✅ COMPLETED
+### Before Writing Code
 
-**Goal**: Minimal working orchestrator with basic task execution.
+1. **Read relevant documentation:**
+   - **Architecture** → [`docs/development/architecture.md`](docs/development/architecture.md)
+   - **Current phase status** → [`docs/development/implementation-status.md`](docs/development/implementation-status.md)
+   - **How to add features** → [`docs/development/patterns.md`](docs/development/patterns.md)
+   - **Git workflow** → [`docs/development/git-workflow.md`](docs/development/git-workflow.md)
 
-**Checklist**:
-- ✅ CLI interface (`orchestrator` command)
-- ✅ Basic orchestrator loop (ReAct pattern)
-- ✅ LLM client with Anthropic provider
-- ✅ Tool registry + built-in tools (bash, file_read, file_write, file_delete)
-- ✅ Simple task model (no hierarchy yet)
-- ✅ 5 built-in skills (code_edit, code_review, research, git_operations, file_management)
-- ✅ Configuration loading (YAML)
-- ✅ Environment variable support (python-dotenv)
+2. **Check current phase status** in `implementation-status.md`
 
-**Not Implemented**:
-- Hook system (base classes only)
-- Task dependencies
-- Subagents
-- HITL approvals
-- Memory/caching
+3. **Follow testing guidelines** in [`docs/development/testing.md`](docs/development/testing.md)
 
-### Phase 2: Hook System & HITL ✅ COMPLETED
+### When You Encounter Issues
 
-**Goal**: Add extensibility through hooks and human oversight.
+- See [`docs/development/troubleshooting.md`](docs/development/troubleshooting.md)
+- Check logs in `.orchestrator/logs/orchestrator.log`
 
-**Checklist**:
-- ✅ Hook engine implementation
-  - ✅ Event triggering at lifecycle points
-  - ✅ Priority-based execution
-  - ✅ Context propagation
-  - ✅ Result handling (continue/block/modify)
-- ✅ Built-in hooks
-  - ✅ LoggingHook (all events)
-  - ✅ HITLHook (approval prompts)
-  - ✅ MetricsHook (statistics collection)
-- ✅ HITL workflow
-  - ✅ Interactive approval prompts
-  - ✅ Approval rules configuration
-  - ✅ Auto-approval for safe operations
-  - ✅ Timeout handling
-- ✅ Hook configuration loading
-  - ✅ Parse `config/hooks.yaml`
-  - ⚠️ Register custom hooks from user_extensions (framework ready, not implemented)
-  - ✅ Enable/disable hooks dynamically
+### Adding New Features
 
-**Implemented Files**:
-- `src/orchestrator/hooks/engine.py` - Hook engine with event orchestration
-- `src/orchestrator/hooks/builtin/logging.py` - LoggingHook, StartupLoggingHook, LLMCallLoggingHook
-- `src/orchestrator/hooks/builtin/hitl.py` - HITLHook with interactive approval prompts
-- `src/orchestrator/hooks/builtin/metrics.py` - MetricsHook for statistics collection
-- `src/orchestrator/core/orchestrator.py` - Integrated hook triggers at all lifecycle events
-- `config/hooks.yaml` - Complete hook configuration
-
-**Completion**: ~95% (user_extensions auto-discovery deferred to Phase 4)
-
-### Phase 2.5: TodoList Tool (Hotfix) ✅ COMPLETED
-
-**Reason for Insertion**: Critical capability gap discovered - Agent cannot track progress across long reasoning loops (max 20 iterations).
-
-**Problem**: In complex multi-step tasks, the Agent may lose track of what has been completed after 10+ iterations, leading to incomplete or repeated work.
-
-**Solution**: Implement TodoList tool (inspired by Claude Code's TodoWrite) to enable structured task progress tracking.
-
-**Checklist**:
-- ✅ Extend Task model with `todo_list` field and `TodoItem` model
-- ✅ Implement TodoListTool with operations: write, add, update, list, clear
-- ✅ Register tool in ToolRegistry
-- ✅ Update system prompt with usage instructions
-- ✅ Enable in configuration (config/default.yaml)
-- ✅ Testing with complex multi-step tasks
-
-**Implemented Files**:
-- `src/orchestrator/tasks/models.py` - Added TodoItem model and Task.todo_list field
-- `src/orchestrator/tools/builtin/todo.py` - TodoListTool implementation
-- `src/orchestrator/tools/registry.py` - Registered TodoListTool
-- `src/orchestrator/core/orchestrator.py` - Updated system prompt, task injection
-- `config/default.yaml` - Enabled todo_list tool
-
-**Usage Example**:
-```python
-# Agent can now use todo_list tool
-{
-  "operation": "write",
-  "todos": [
-    {"content": "Read database schema", "status": "pending", "active_form": "Reading database schema"},
-    {"content": "Design new table", "status": "pending", "active_form": "Designing new table"},
-    {"content": "Write migration", "status": "pending", "active_form": "Writing migration"}
-  ]
-}
-
-# Update progress
-{"operation": "update", "index": 0, "status": "completed"}
-{"operation": "update", "index": 1, "status": "in_progress"}
-```
-
-**Impact**: Enables Agent to handle complex tasks without losing context. Critical for production use.
-
-**Priority**: HIGH - Blocks effective execution of complex tasks
-
-**Completion**: 100%
-
-### Phase 2.6: Rich CLI Display & Streaming Output ✅ COMPLETED
-
-**Reason for Insertion**: User cannot see Agent's real-time progress during task execution.
-
-**Problem**: Terminal output issues identified by user:
-1. Cannot see which TODO item is currently running
-2. Cannot see Agent's reasoning/thinking process (internal monologue)
-3. No streaming output - all results appear at end
-4. Cannot see which tools are executing and with what parameters
-
-**Solution**: Implement DisplayHook with Rich library for real-time terminal feedback.
-
-**Checklist**:
-- ✅ Create DisplayManager using Rich library
-  - ✅ Panel displays for thinking, tool execution, task lifecycle
-  - ✅ Formatted table for TODO status with icons (✅⏳⏸)
-  - ✅ Color-coded output (cyan=thinking, yellow=tools, green=success)
-- ✅ Create DisplayHook with highest priority (5)
-  - ✅ Monitor all events via wildcard "*"
-  - ✅ Display thinking from llm.after_call
-  - ✅ Display tool execution with parameters
-  - ✅ Special handling for todo_list to show formatted table
-  - ✅ Show iteration progress (X/20)
-- ✅ Modify Orchestrator to extract reasoning text
-  - ✅ Parse response.content for text blocks
-  - ✅ Pass reasoning_text in llm.after_call event
-  - ✅ Pass iteration metadata to hooks
-- ✅ Register DisplayHook in hooks.yaml
-- ✅ Update CLI to remove final single output
-
-**Implemented Files**:
-- `src/orchestrator/cli/display.py` - DisplayManager with Rich UI components
-- `src/orchestrator/hooks/builtin/display.py` - DisplayHook for real-time event monitoring
-- `src/orchestrator/core/orchestrator.py` - Extract reasoning, pass metadata to hooks
-- `src/orchestrator/hooks/engine.py` - Support metadata parameter in trigger()
-- `src/orchestrator/cli.py` - Removed final output (now via DisplayHook)
-- `config/hooks.yaml` - Registered DisplayHook with priority=5
-
-**Key Features**:
-- **Real-time Feedback**: User sees Agent thinking, tool execution, TODO progress instantly
-- **Structured Display**: Rich panels and tables for clean, organized output
-- **TODO Visibility**: Formatted table shows current TODO item status with icons
-- **Iteration Tracking**: Shows "Iteration 5/20" to track reasoning loop progress
-- **Reasoning Transparency**: Displays Agent's internal monologue before each action
-
-**Impact**: Dramatically improves user experience - user can now follow Agent's thought process and see real-time progress.
-
-**Priority**: HIGH - Critical UX improvement for usability
-
-**Completion**: 100%
-
-### Phase 2.7: API Rate Limit Handling (Hotfix) ✅ COMPLETED
-
-**Reason for Insertion**: Users frequently encounter 429 "Too Many Requests" errors causing task failures.
-
-**Problem**:
-1. No retry mechanism for rate limit (429) errors
-2. Tasks fail immediately when hitting rate limits
-3. Rapid consecutive LLM calls in ReAct loop (up to 20 iterations) quickly exhaust rate limits
-4. No helpful error messages explaining the issue or solution
-
-**Solution**: Implement automatic retry with exponential backoff for 429 errors.
-
-**Checklist**:
-- ✅ Add retry configuration to config/default.yaml
-- ✅ Implement exponential backoff in AnthropicProvider.chat()
-- ✅ Detect rate limit errors (anthropic.RateLimitError, 429 in message)
-- ✅ Read retry-after header from response if available
-- ✅ Add optional request throttling to prevent rapid requests
-- ✅ Improve error messages with actionable guidance
-- ✅ Update CLAUDE.md troubleshooting section
-
-**Implemented Files**:
-- `config/default.yaml` - Retry and throttle configuration
-- `src/orchestrator/llm/client.py` - Retry logic with exponential backoff
-- `CLAUDE.md` - Comprehensive troubleshooting guide for 429 errors
-
-**Configuration**:
-```yaml
-llm:
-  anthropic:
-    retry:
-      max_retries: 5  # Retry up to 5 times
-      base_delay: 2.0  # Start with 2s delay
-      max_delay: 60.0  # Cap at 60s
-      exponential_base: 2.0  # Double delay each retry
-    throttle:
-      enabled: false  # Optional feature
-      min_request_interval: 0.5  # Min seconds between requests
-```
-
-**Retry Behavior**:
-- Attempt 1: Wait 2s, retry
-- Attempt 2: Wait 4s, retry
-- Attempt 3: Wait 8s, retry
-- Attempt 4: Wait 16s, retry
-- Attempt 5: Wait 32s, retry
-- After 5 retries: Fail with helpful error message
-
-**Key Features**:
-- **Automatic Recovery**: Tasks automatically recover from temporary rate limit errors
-- **Exponential Backoff**: Progressively longer waits reduce API pressure
-- **Retry-After Support**: Respects API's suggested retry timing if provided
-- **Helpful Errors**: Clear guidance on checking usage tier and rate limits
-- **Optional Throttling**: Prevent rapid consecutive requests if enabled
-
-**Impact**: Dramatically improves reliability - tasks no longer fail due to temporary rate limits. Critical for low-tier accounts.
-
-**Priority**: HIGH - Directly affects task completion rate and user experience
-
-**Completion**: 100%
-
-### Phase 3: Task Hierarchy & Dependencies ✅ COMPLETED
-
-**Goal**: Support complex multi-step workflows with task decomposition and dependency management.
-
-**Checklist**:
-- ✅ Task hierarchy
-  - ✅ Parent-child relationships
-  - ✅ Subtask creation API (`create_subtask()`)
-  - ✅ Automatic subtask execution order
-  - ✅ Depth limiting (max 5 levels)
-- ✅ Task dependencies
-  - ✅ `depends_on` and `blocks` relationships
-  - ✅ Dependency resolution algorithm (topological sort using Kahn's algorithm)
-  - ✅ Cycle detection using DFS
-  - ✅ Auto-blocking when dependencies not met
-- ✅ Smart task scheduling
-  - ✅ Execute tasks in dependency order
-  - ✅ Priority-based selection (CRITICAL > HIGH > MEDIUM > LOW)
-  - ✅ Progress tracking across hierarchy
-  - ✅ Automatic parent completion when all subtasks done
-- ✅ Task decomposition tool
-  - ✅ Agent can create subtasks during execution
-  - ✅ Agent can add/remove dependencies
-  - ✅ Agent can query task relationships
-  - ✅ Display hierarchy in terminal
-
-**Implemented Files**:
-- `src/orchestrator/tasks/manager.py` - Added hierarchy and dependency APIs
-  - `create_subtask()` - Create child tasks under parent
-  - `add_dependency()` / `remove_dependency()` - Manage dependencies
-  - `get_dependencies()` - Query task relationships
-  - `_has_dependency_cycle()` - Cycle detection with DFS
-  - `get_execution_order()` - Topological sort
-  - `get_next_executable_task()` - Smart scheduler with dependency checks
-- `src/orchestrator/tools/builtin/task_decompose.py` - New tool for Agent
-  - Operations: `create_subtask`, `add_dependency`, `remove_dependency`, `list_subtasks`, `get_task_info`
-- `src/orchestrator/tools/registry.py` - Registered TaskDecomposeTool
-- `src/orchestrator/core/orchestrator.py` - Integration
-  - Updated system prompt with task decomposition guidance
-  - Tool injection for TaskDecomposeTool
-  - `_handle_task_completion()` - Post-completion processing
-  - `_unblock_dependent_tasks()` - Unblock blocked tasks
-  - `_check_parent_completion()` - Auto-complete parent tasks
-- `src/orchestrator/display.py` - Visualization functions
-  - `show_task_hierarchy()` - ASCII tree display
-  - `show_dependency_info()` - Dependency relationships panel
-- `config/default.yaml` - Phase 3 configuration
-
-**Key Algorithms**:
-
-1. **Cycle Detection (DFS)**:
-   ```python
-   def _has_dependency_cycle(task_id, new_dependency_id):
-       # Check if adding task_id -> new_dependency_id creates cycle
-       # Use DFS from new_dependency_id to find path back to task_id
-       # If path exists, cycle would be created
-   ```
-
-2. **Topological Sort (Kahn's Algorithm)**:
-   ```python
-   def get_execution_order(task_ids):
-       # Build in-degree map (count of dependencies)
-       # Start with tasks having zero dependencies
-       # Process tasks and reduce in-degree of blocked tasks
-       # Return sorted list in dependency-safe order
-   ```
-
-3. **Smart Scheduler**:
-   ```python
-   def get_next_executable_task():
-       # Task is executable if:
-       # 1. Status is PENDING
-       # 2. All dependencies are COMPLETED
-       # 3. All subtasks are COMPLETED (if any)
-       # 4. Parent is IN_PROGRESS (if has parent)
-       # Sort by priority and return highest
-   ```
-
-**Configuration**:
-```yaml
-tasks:
-  max_depth: 5  # Maximum nesting depth
-  max_subtasks_per_task: 20  # Limit subtasks
-  auto_block_on_dependency: true  # Auto-block if deps not met
-
-tools:
-  task_decompose:
-    enabled: true
-    requires_approval: false
-```
-
-**Usage Example**:
-```python
-# Agent uses task_decompose tool to break down complex task
-{
-  "operation": "create_subtask",
-  "title": "Design database schema",
-  "description": "Design tables for user management",
-  "priority": "high"
-}
-
-# Add dependency (subtask B depends on subtask A)
-{
-  "operation": "add_dependency",
-  "task_id": "subtask_b_id",
-  "depends_on_task_id": "subtask_a_id"
-}
-
-# List all subtasks
-{
-  "operation": "list_subtasks"
-}
-```
-
-**Benefits**:
-1. **Structured Execution**: Tasks execute in correct dependency order
-2. **Safety**: Cycle detection prevents deadlocks
-3. **Automatic Management**: Parent tasks auto-complete when subtasks finish
-4. **Progress Visibility**: Hierarchy displayed in terminal with status icons
-5. **Flexibility**: Agent can decompose tasks dynamically during execution
-
-**Impact**: Enables Agent to handle complex multi-step workflows with proper sequencing and tracking.
-
-**Priority**: HIGH - Core feature for production use
-
-**Completion**: 100%
-
-### Phase 3.5: Workspace Isolation ✅ COMPLETED
-
-**Goal**: Prevent Agent file operations from polluting the project directory during testing and development.
-
-**Problem**: When running `orchestrator chat` in the project root, Agent file operations (write, delete) can overwrite or corrupt project files like README.md, source code, etc.
-
-**Solution**: Implement isolated working directory that Agent operates in by default.
-
-**Checklist**:
-- ✅ Configuration: Add `working_directory` setting to `config/default.yaml`
-- ✅ Orchestrator initialization: Change to workspace on startup
-- ✅ Workspace restoration: Restore original directory on shutdown
-- ✅ Dedicated test command: Add `orchestrator test` for safe testing
-- ✅ Gitignore: Exclude workspace directories from version control
-
-**Implemented Files**:
-- `config/default.yaml` - Added `working_directory: "./.orchestrator/workspace"` setting
-- `src/orchestrator/core/orchestrator.py` - Modified `initialize()` and `shutdown()`
-  - Store original working directory
-  - Change to workspace on initialization
-  - Create workspace if doesn't exist
-  - Restore original directory on shutdown
-- `src/orchestrator/cli.py` - Added `orchestrator test` command
-  - Forces workspace isolation
-  - Displays clear message about isolated operations
-  - Prevents project file pollution during testing
-- `.gitignore` - Exclude `.orchestrator/workspace/` from git
-
-**Usage**:
-
-```bash
-# Normal mode - uses workspace from config (default: .orchestrator/workspace)
-orchestrator chat
-
-# Test mode - explicitly forces workspace isolation with clear messaging
-orchestrator test
-```
-
-**Benefits**:
-1. **Safety**: Project files protected from accidental modification
-2. **Clean Testing**: Test Agent behavior without risk
-3. **Isolation**: All file operations confined to workspace
-4. **Transparency**: Logs show both original and working directories
-5. **Flexibility**: Workspace path configurable in config file
-
-**Impact**: Critical feature for safe development and testing. Prevents data loss from Agent file operations.
-
-**Priority**: CRITICAL - Enables safe testing of orchestrator functionality
-
-**Completion**: 100%
-
-### Phase 4A: Skill Registry ✅ COMPLETED
-
-**Goal**: Implement automatic skill discovery and intelligent skill-based task guidance.
-
-**Problem**: LLM lacks domain-specific knowledge for specialized tasks (code editing, git operations, etc.). Each task requires manual prompting with best practices.
-
-**Solution**: Create a skill registry that auto-discovers SKILL.md files and injects relevant instructions into the system prompt based on task context.
-
-**Checklist**:
-- ✅ Skill models and parsing
-  - ✅ Pydantic model for Skill metadata
-  - ✅ YAML frontmatter parser
-  - ✅ Skill content extraction
-  - ✅ Validation for required fields
-- ✅ Skill registry system
-  - ✅ Auto-discovery from builtin and user directories
-  - ✅ Tag-based indexing
-  - ✅ Tool-based indexing
-  - ✅ Keyword search in name/description
-  - ✅ Smart skill matching for tasks
-- ✅ Skill injection
-  - ✅ Automatic skill matching based on task description
-  - ✅ Tool requirement matching
-  - ✅ Priority-based skill selection
-  - ✅ Inject top N skills into system prompt
-- ✅ CLI commands
-  - ✅ `orchestrator skill list` - List all skills with filtering
-  - ✅ `orchestrator skill show <name>` - Display skill content
-  - ✅ `orchestrator skill create <name>` - Create skill template
-
-**Implemented Files**:
-- `src/orchestrator/skills/models.py` - Skill data models and parsing
-  - `SkillMetadata` - Pydantic model for frontmatter
-  - `Skill` - Complete skill with metadata + content
-  - `parse_skill_file()` - Parse SKILL.md with YAML frontmatter
-  - `create_skill_template()` - Generate new skill skeleton
-- `src/orchestrator/skills/registry.py` - Skill registry and discovery
-  - `SkillRegistry` - Main registry class
-  - `discover_skills_in_directory()` - Auto-discover SKILL.md files
-  - `search_by_tags()` / `search_by_tools()` / `search_by_keywords()` - Search APIs
-  - `get_skills_for_task()` - Smart matching algorithm
-- `src/orchestrator/core/orchestrator.py` - Skill injection
-  - Initialize SkillRegistry in `initialize()`
-  - `_get_skill_instructions()` - Match and format skills
-  - Inject skills into `_build_system_prompt()`
-  - Add `task_description` to context for matching
-- `src/orchestrator/cli.py` - Skill management commands
-  - `skill list` - Table view with tag/tool filtering
-  - `skill show` - Rich display of skill metadata + content
-  - `skill create` - Interactive skill creation
-- `config/default.yaml` - Skill configuration
-
-**Skill File Format**:
-```markdown
----
-name: code_edit
-description: "Edit existing code files with proper validation"
-tools_required: [file_read, file_write]
-tags: [coding, refactoring]
-version: "1.0.0"
-priority: medium
----
-
-# Code Edit
-
-## Overview
-...
-```
-
-**Usage Examples**:
-
-```bash
-# List all skills
-orchestrator skill list
-
-# Filter by tag
-orchestrator skill list --tag coding
-
-# Filter by tool
-orchestrator skill list --tool file_write
-
-# Show skill details
-orchestrator skill show code_edit
-
-# Create new skill
-orchestrator skill create my_skill \
-  --description "My custom skill" \
-  --tools file_read file_write \
-  --tags automation
-```
-
-**Matching Algorithm**:
-1. Extract keywords from task description
-2. Search skills by keywords in name/description
-3. Search skills by available tools
-4. Combine and deduplicate results
-5. Sort by priority (high > medium > low)
-6. Select top N skills (default: 3)
-
-**Automatic Injection**:
-When a task is executed, the orchestrator:
-1. Analyzes task description
-2. Matches relevant skills using `get_skills_for_task()`
-3. Injects skill instructions into system prompt
-4. LLM receives domain-specific guidance automatically
-
-**Example Task Flow**:
-```
-User: "Refactor the auth.py file to improve error handling"
-
-Orchestrator:
-1. Detects keywords: "refactor", "file", "error"
-2. Matches skills: code_edit, code_review
-3. Injects both skill instructions into prompt
-4. LLM follows best practices from skills
-```
-
-**Built-in Skills** (5 available):
-1. **code_edit** - Safe code editing with validation
-2. **code_review** - Code quality assessment
-3. **research** - Web research methodology
-4. **git_operations** - Git workflow best practices
-5. **file_management** - File organization patterns
-
-**Benefits**:
-1. **Zero Manual Prompting**: Skills auto-inject based on task
-2. **Consistent Quality**: Best practices enforced automatically
-3. **Extensible**: Users can add custom skills easily
-4. **Discoverable**: CLI commands make skills visible
-5. **Prioritized**: High-priority skills preferred
-
-**Impact**: Significantly improves LLM performance on domain-specific tasks through automatic injection of expert guidance.
-
-**Priority**: HIGH - Core feature for quality task execution
-
-**Completion**: 100%
-
-### Phase 4B: Subagent System ✅ COMPLETED
-
-**Goal**: Enable task delegation to isolated child agents with resource constraints.
-
-**Checklist**:
-- ✅ Subagent manager
-  - ✅ Spawn isolated child agents
-  - ✅ Resource constraints (tokens, time, tools)
-  - ✅ Context isolation
-  - ✅ Result collection
-- ✅ Subagent lifecycle
-  - ✅ Concurrent subagent limits
-  - ✅ Graceful shutdown
-  - ✅ Error propagation to parent
-- ✅ Hook events (subagent.spawned, subagent.completed, subagent.failed)
-- ✅ SubagentSpawnTool for Agent to use
-- ✅ Configuration in config/default.yaml
-
-**Implemented Files**:
-- `src/orchestrator/subagents/models.py` - Subagent data models
-  - `SubagentConstraints` - Resource constraints for subagent execution
-  - `SubagentHandle` - Handle for managing spawned subagents
-  - `SubagentContext` - Context passed to subagent
-- `src/orchestrator/subagents/manager.py` - SubagentManager implementation
-  - `spawn()` - Spawn isolated child agents
-  - `wait_for()` - Wait for subagent completion
-  - `get_active_count()` - Query active subagent count
-  - `list_active()` - List all active subagents
-  - Concurrency control with semaphore
-  - Hook event triggers (spawned, completed, failed)
-- `src/orchestrator/tools/builtin/subagent_spawn.py` - SubagentSpawnTool
-  - Operations: spawn, wait, list_active, get_status
-  - Agent interface to subagent system
-- `src/orchestrator/core/orchestrator.py` - Integration
-  - Initialize SubagentManager with hook_engine
-  - Register SubagentSpawnTool
-  - Shutdown subagent manager
-  - Factory method for creating subagent orchestrators
-- `config/default.yaml` - Subagent configuration
-
-**Key Features**:
-
-1. **Resource Constraints**:
-   - `max_tokens`: Token budget limit (default: 50000)
-   - `timeout_seconds`: Execution timeout (default: 300s)
-   - `max_iterations`: Reasoning loop limit (default: 15)
-   - `allowed_tools`: Tool access restriction (default: bash, file_read, file_write)
-   - `skill`: Optional skill to load
-
-2. **Context Isolation**:
-   - Subagents only receive subtask info + parent context
-   - Separate configuration with constraints applied
-   - Independent tool registry with restricted tools
-   - No access to parent conversation history
-
-3. **Concurrency Control**:
-   - Semaphore-based concurrency limiting (max_concurrent: 3)
-   - Async execution with proper cleanup
-   - Graceful shutdown cancels all active subagents
-
-4. **Error Handling**:
-   - Timeout handling with asyncio.wait_for()
-   - Exception propagation to parent
-   - Status tracking (PENDING, RUNNING, COMPLETED, FAILED, TIMEOUT, CANCELLED)
-   - Hook events for monitoring
-
-5. **Tool Interface**:
-   - `spawn` - Create new subagent with constraints
-   - `wait` - Wait for subagent completion
-   - `list_active` - List active subagents
-   - `get_status` - Query subagent status
-
-**Usage Example**:
-```python
-# Agent uses subagent_spawn tool
-{
-  "operation": "spawn",
-  "subtask_id": "task_123",
-  "max_tokens": 30000,
-  "timeout_seconds": 180,
-  "allowed_tools": ["bash", "file_read"],
-  "skill": "research",
-  "context": {"domain": "database migration"}
-}
-
-# Wait for completion
-{
-  "operation": "wait",
-  "subtask_id": "task_123",
-  "wait_timeout": 200
-}
-```
-
-**Benefits**:
-1. **Task Delegation**: Complex subtasks can be delegated to specialized agents
-2. **Resource Isolation**: Subagents operate within defined budgets
-3. **Parallel Execution**: Multiple subagents can run concurrently
-4. **Safety**: Tool restrictions prevent dangerous operations
-5. **Monitoring**: Hook events enable real-time tracking
-
-**Impact**: Enables hierarchical task decomposition with isolated execution contexts, improving orchestrator's ability to handle complex multi-step workflows.
-
-**Note**: Phase 4 was split into 4A (Skill Registry) and 4B (Subagents) for easier implementation. Both phases are now complete.
-
-**Completion**: 100%
-
-### Phase 4 (Original): Subagents & Skill Registry ✅ COMPLETED
-
-**Status**: Phase 4A (Skill Registry) completed. Phase 4B (Subagents) completed.
-
-**Goal**: Enable delegation and skill-based task assignment.
-
-**Checklist**:
-- [ ] Subagent manager
-  - [ ] Spawn isolated child agents
-  - [ ] Resource constraints (tokens, time, tools)
-  - [ ] Context isolation
-  - [ ] Result collection
-- [ ] Subagent lifecycle
-  - [ ] Concurrent subagent limits
-  - [ ] Graceful shutdown
-  - [ ] Error propagation to parent
-- [ ] Skill registry
-  - [ ] Auto-discover SKILL.md files
-  - [ ] Parse frontmatter metadata
-  - [ ] Index by tags and tools_required
-  - [ ] Skill search API
-- [ ] Skill injection
-  - [ ] Match task to appropriate skill
-  - [ ] Inject skill instructions into prompt
-  - [ ] Track skill usage metrics
-
-**Estimated Effort**: 4-5 days
-
-### Phase 5A: Tool Result Caching ✅ COMPLETED
-
-**Goal**: Improve efficiency through tool result caching with TTL.
-
-**Checklist**:
-- ✅ Cache system infrastructure
-  - ✅ CacheEntry model with TTL and metadata
-  - ✅ CacheStats for performance tracking
-  - ✅ Cache key generation (SHA256 hash)
-- ✅ Tool result caching
-  - ✅ Cache identical tool calls
-  - ✅ TTL-based invalidation
-  - ✅ Cache hit/miss metrics
-  - ✅ Automatic expired entry cleanup
-  - ✅ Max entries limit with LRU eviction
-- ✅ Integration
-  - ✅ CacheManager in Orchestrator
-  - ✅ Tool execution caching
-  - ✅ Cache statistics hook
-  - ✅ Configuration in config/default.yaml
-
-**Implemented Files**:
-- `src/orchestrator/cache/models.py` - Cache data models
-  - `CacheEntry` - Entry with TTL, hits, metadata
-  - `CacheStats` - Hit/miss/eviction statistics
-  - `generate_cache_key()` - SHA256 hash key generation
-- `src/orchestrator/cache/manager.py` - CacheManager implementation
-  - `get()` / `set()` - Basic cache operations
-  - `cache_tool_result()` / `get_cached_tool_result()` - Tool caching
-  - `cache_llm_response()` / `get_cached_llm_response()` - LLM caching
-  - `cleanup_expired()` - TTL-based cleanup
-  - `get_stats()` - Statistics retrieval
-- `src/orchestrator/hooks/builtin/cache.py` - Cache statistics hook
-  - Periodic cache stats logging
-  - Automatic expired entry cleanup
-- `src/orchestrator/core/orchestrator.py` - Integration
-  - Initialize CacheManager
-  - Check cache before tool execution
-  - Cache successful tool results
-- `config/default.yaml` - Cache configuration
-
-**Key Features**:
-
-1. **TTL-based Caching**:
-   - Configurable default TTL (default: 3600s = 1 hour)
-   - Per-entry TTL override support
-   - Automatic expiration checking on access
-   - Periodic cleanup of expired entries
-
-2. **Cache Key Generation**:
-   - SHA256 hash of tool name + arguments
-   - Deterministic and collision-resistant
-   - JSON serialization with sorted keys
-
-3. **Resource Management**:
-   - Max entries limit (default: 1000)
-   - LRU eviction when full
-   - Memory-efficient storage
-
-4. **Statistics Tracking**:
-   - Hit/miss counters
-   - Hit rate calculation
-   - Eviction tracking
-   - Total entries count
-
-5. **Safety Features**:
-   - Only cache successful tool results
-   - LLM response caching disabled by default
-   - Configurable enable/disable per cache type
-
-**Configuration**:
-```yaml
-cache:
-  enabled: true
-  ttl: 3600  # 1 hour
-  max_entries: 1000
-  tool_results: true
-  llm_responses: false
-```
-
-**Benefits**:
-1. **Performance**: Avoid redundant tool executions
-2. **Cost Reduction**: Fewer API calls for repeated operations
-3. **Consistency**: Same input always returns cached result
-4. **Observability**: Cache hit rate metrics
-
-**Impact**: Significantly improves performance for workflows with repeated tool calls (e.g., reading same files, checking same status).
-
-**Completion**: 100%
-
-### Phase 5B: Workspace State & Cross-Session Memory ✅ COMPLETED
-
-**Goal**: Enable within-session conversation continuity through workspace-level memory.
-
-**Checklist**:
-- ✅ Workspace state management
-  - ✅ Persistent conversation history
-  - ✅ Rolling window of task summaries (10 items)
-  - ✅ User preferences tracking
-- ✅ Task summary generation (LLM-based)
-- ✅ Context injection into tasks
-  - ✅ Recent task summaries (last 3)
-  - ✅ Related task search (keyword-based)
-  - ✅ Recent conversation snippets (last 10 messages)
-- ✅ Workspace lifecycle
-  - ✅ Conversation compression (when > 100 messages)
-  - ✅ TTL-based cleanup (365 days)
-  - ✅ CLI commands for management
-- ✅ Configuration
-  - ✅ Workspace enable/disable
-  - ✅ Compression settings
-  - ✅ Context injection limits
-- ✅ Testing
-  - ✅ Unit tests (18/18 passing, >80% coverage)
-  - ✅ Integration tests (2 passing, 6 skipped without API key)
-
-**Implemented Files**:
-- `src/orchestrator/workspace/__init__.py` - Module initialization
-- `src/orchestrator/workspace/state.py` - WorkspaceState, Message, TaskSummary, WorkspaceManager
-- `src/orchestrator/workspace/summarizer.py` - LLM-based task summarization
-- `src/orchestrator/workspace/lifecycle.py` - Compression and cleanup
-- `tests/unit/test_workspace.py` - 18 unit tests
-- `tests/integration/test_workspace_integration.py` - Integration tests
-- `PHASE_5B_BUG_FIXES.md` - Comprehensive bug fix documentation
-
-**Modified Files**:
-- `src/orchestrator/core/orchestrator.py` - Workspace integration, context injection
-- `src/orchestrator/cli.py` - Workspace CLI commands, conversation population
-- `config/default.yaml` - Workspace configuration section
-- `.gitignore` - Workspace state file exclusions
-
-**Key Features Delivered**:
-- ✅ Within-session conversation continuity
-- ✅ Workspace persistence across restarts
-- ✅ LLM-based task summarization (2-3 sentences)
-- ✅ Context injection (recent tasks + conversations)
-- ✅ Keyword-based related task search
-- ✅ Rolling window storage (configurable)
-- ✅ Automatic conversation compression
-- ✅ CLI workspace management commands
-
-**Known Limitations** (Deferred to Phase 6):
-- ⚠️ Session management not implemented - each run creates new session_id
-- ⚠️ No automatic workspace resumption
-- ⚠️ No cross-session embeddings or vector search
-- ⚠️ No mode system (Ask/Plan/Execute)
-
-**Success Criteria Met**:
-✅ Agent can reference previous tasks in same session
-✅ Context injection reduces repeated questions
-✅ Task summaries generated automatically
-✅ Workspace persists across orchestrator restarts
-✅ Keyword search finds related past tasks
-✅ Compression prevents unbounded memory growth
-✅ CLI commands enable workspace management
-✅ All tests passing
-
-**Note**: Phase 5 was split into 5A (Tool Caching - Completed) and 5B (Workspace State - Completed).
-
-**Completion**: 100% (Session management deferred to Phase 6)
+**Before implementing:**
+- Read relevant section in [`docs/development/patterns.md`](docs/development/patterns.md):
+  - Adding a new tool
+  - Creating a skill
+  - Adding a custom hook
+  - Using HITL for approval
+  - Task decomposition
+  - Spawning subagents
 
 ---
 
-## Key Design Decisions
+## Critical Rules (Always Apply)
 
-### 1. Async Everywhere
+### Code Changes
 
-**Decision**: All I/O operations use `async/await`.
+- ✅ **Read files before editing** - Never propose changes to code you haven't read
+- ✅ **Write tests for new features** - Unit tests required
+- ✅ **Update documentation if architecture changes** - Keep CLAUDE.md in sync
+- ❌ **Never modify production data** - Use test environments
+- ❌ **Never skip hooks** (--no-verify, --no-gpg-sign)
+- ❌ **Never create files unless necessary** - Always prefer editing existing files
 
-**Rationale**:
-- Non-blocking LLM API calls
-- Concurrent tool execution (Phase 5)
-- Efficient subagent management
-- Better resource utilization
+### Tool Usage
 
-**Impact**:
-- All custom tools must be `async def`
-- Hook execution is async
-- Task execution is async
+- Use specialized tools (Read/Edit/Write) instead of bash commands for file operations
+- Use Task tool with Explore agent for complex searches
+- Use TodoWrite tool to track multi-step tasks
+- NEVER use bash echo/printf to communicate with user - output text directly
 
-### 2. Anthropic Native Tool Calling
+### Testing
 
-**Decision**: Use Anthropic's tool calling API, not text parsing.
+- Unit tests required for all new features
+- Integration tests for LLM-based features (when API key available)
+- Manual E2E testing before merging to dev
+- Run full test suite: `pytest --cov=orchestrator`
 
-**Rationale**:
-- More reliable than regex parsing
-- Structured tool input/output
-- Proper error handling
-- Native support in API
+### Git Commits
 
-**Implementation**: See `src/orchestrator/core/orchestrator.py:_reasoning_loop()`
-
-### 3. Sequential Execution (Phase 1)
-
-**Decision**: Execute tasks one at a time in Phase 1.
-
-**Rationale**:
-- Simpler implementation
-- Easier debugging
-- Sufficient for initial use cases
-
-**Future**: Parallel execution in Phase 5 with proper resource management.
-
-### 4. Skills as Prompts
-
-**Decision**: Skills are markdown instructions, not executable code.
-
-**Rationale**:
-- More flexible (LLM decides tool usage)
-- Easier to create (no coding required)
-- Version-controllable text files
-- LLM can adapt instructions to context
-
-**Alternative Rejected**: Executable skill workflows (too rigid, less adaptable).
-
-### 5. Subagent Isolation
-
-**Decision**: Subagents have limited context and resources.
-
-**Rationale**:
-- Prevents context overflow
-- Forces task decomposition
-- Budget control (tokens, time)
-- Clearer separation of concerns
-
-**Communication**: Parent → Child via task context, Child → Parent via result only.
-
-### 6. Hook-Based Extensibility
-
-**Decision**: Hooks at every key lifecycle point.
-
-**Rationale**:
-- Extensible without modifying core
-- User customizations in user_extensions
-- Easy to enable/disable features
-- Composable behaviors (multiple hooks per event)
-
-**Examples**: Logging, HITL, metrics, custom validation.
-
-### 7. Three-Level Retry Configuration
-
-**Decision**: Global < Tool < Task retry settings.
-
-**Rationale**:
-- Sensible defaults for all tools
-- Tool-specific overrides (bash vs file_read)
-- Critical task overrides
-- Flexible without complexity
-
-**Backoff**: Exponential backoff to avoid rate limits.
-
-### 8. Declarative Tool Definitions
-
-**Decision**: Tools declare capabilities; LLM decides usage.
-
-**Rationale**:
-- LLM has full context for tool selection
-- Tools don't need complex orchestration logic
-- Easy to add new tools
-- Natural language tool descriptions
-
-**Schema**: Tools converted to Anthropic's `input_schema` format.
+- Follow conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`
+- Add co-author line: `Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>`
+- Create commits only when requested by user
+- NEVER use `git commit --amend` unless explicitly requested
 
 ---
 
-## Important Patterns
+## Current Implementation Status
 
-### Adding a New Tool
+### Completed Phases
 
-#### Simple Function Tool
+- ✅ **Phase 1**: Core Foundation (Orchestrator loop, LLM client, basic tools)
+- ✅ **Phase 2**: Hook System & HITL (Hook engine, approval workflow)
+- ✅ **Phase 2.5**: TodoList Tool (Progress tracking hotfix)
+- ✅ **Phase 2.6**: Rich CLI Display & Streaming Output (UX improvements)
+- ✅ **Phase 2.7**: API Rate Limit Handling (Exponential backoff)
+- ✅ **Phase 3**: Task Hierarchy & Dependencies (Topological sort, cycle detection)
+- ✅ **Phase 3.5**: Workspace Isolation (Isolated working directory)
+- ✅ **Phase 4A**: Skill Registry (Auto-discovery, tag-based matching)
+- ✅ **Phase 4B**: Subagent System (Resource-constrained delegation)
+- ✅ **Phase 5A**: Tool Result Caching (TTL-based, LRU eviction)
+- ✅ **Phase 5B**: Workspace State & Memory (Conversation continuity, task summaries)
 
-```python
-# user_extensions/tools/my_tools.py
+### Next Phase
 
-from orchestrator.tools.base import tool
+**Phase 6**: Mode System (Ask/Plan/Execute modes with session management)
 
-@tool(name="count_lines", requires_approval=False)
-async def count_lines(file_path: str) -> int:
-    """Count lines in a file."""
-    with open(file_path) as f:
-        return len(f.readlines())
-```
+**Full Implementation Details**: See [`docs/development/implementation-status.md`](docs/development/implementation-status.md)
 
-#### Class-Based Tool with State
-
-```python
-# user_extensions/tools/my_tools.py
-
-from orchestrator.tools.base import Tool, ToolDefinition, ToolParameter, ToolResult
-
-class GitStatusTool(Tool):
-    definition = ToolDefinition(
-        name="git_status",
-        description="Get git repository status",
-        parameters=[
-            ToolParameter(
-                name="repo_path",
-                type="string",
-                description="Path to git repository",
-                required=False,
-                default="."
-            )
-        ],
-        requires_approval=False
-    )
-
-    async def execute(self, repo_path: str = ".") -> ToolResult:
-        import subprocess
-        try:
-            result = subprocess.run(
-                ["git", "status", "--short"],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            return ToolResult(success=True, data=result.stdout)
-        except Exception as e:
-            return ToolResult(success=False, error=str(e))
-
-# Register in user_extensions/__init__.py
-from .tools.my_tools import GitStatusTool
-def register_user_extensions(orchestrator):
-    orchestrator.tool_registry.register(GitStatusTool())
-```
-
-### Creating a New Skill
-
-```bash
-# Create skill directory
-mkdir -p user_extensions/skills/deployment
-
-# Create SKILL.md
-cat > user_extensions/skills/deployment/SKILL.md << 'EOF'
----
-name: deployment
-description: "Deploy applications to production safely"
-tools_required: [bash, file_read]
-version: "1.0.0"
-tags: [devops, deployment, production]
 ---
 
-# Deployment
+## Documentation Index
 
-## Overview
-Safe deployment procedures for production environments.
+### Detailed Documentation (`docs/development/`)
 
-## Pre-Deployment Checklist
-- [ ] All tests passing
-- [ ] Code reviewed and approved
-- [ ] Database migrations prepared
-- [ ] Rollback plan documented
-- [ ] Monitoring alerts configured
+- **[`architecture.md`](docs/development/architecture.md)** - Architecture deep dive, component design, LLM integration details
+- **[`implementation-status.md`](docs/development/implementation-status.md)** - All phase implementation details and checklists
+- **[`patterns.md`](docs/development/patterns.md)** - How to add tools, skills, hooks, subagents
+- **[`troubleshooting.md`](docs/development/troubleshooting.md)** - Common issues and solutions (rate limits, API keys, tool errors)
+- **[`testing.md`](docs/development/testing.md)** - Testing strategies, unit/integration test examples
+- **[`git-workflow.md`](docs/development/git-workflow.md)** - Complete git workflow reference and emergency recovery
+- **[`configuration.md`](docs/development/configuration.md)** - Full configuration schema and options
 
-## Deployment Steps
-1. Check current production status
-2. Create backup
-3. Run database migrations
-4. Deploy new version
-5. Verify deployment
-6. Monitor for errors
+### Quick References
 
-## Rollback Procedure
-If deployment fails:
-1. Stop new version
-2. Restore from backup
-3. Roll back database migrations
-4. Restart old version
-5. Document failure for post-mortem
-EOF
-```
-
-### Adding a Custom Hook
-
-```python
-# user_extensions/hooks/custom_hooks.py
-
-from orchestrator.hooks.base import Hook, HookContext, HookResult
-
-class SlackNotificationHook(Hook):
-    name = "slack_notification"
-    priority = 90
-    events = ["task.completed", "task.failed"]
-
-    def __init__(self, webhook_url: str):
-        self.webhook_url = webhook_url
-
-    async def execute(self, context: HookContext) -> HookResult:
-        import httpx
-
-        task = context.data["task"]
-        event = context.event
-
-        message = {
-            "text": f"Task {task.title} {event.split('.')[1]}",
-            "attachments": [{
-                "color": "good" if event == "task.completed" else "danger",
-                "fields": [
-                    {"title": "Task ID", "value": task.id, "short": True},
-                    {"title": "Status", "value": task.status.value, "short": True}
-                ]
-            }]
-        }
-
-        async with httpx.AsyncClient() as client:
-            await client.post(self.webhook_url, json=message)
-
-        return HookResult(action="continue")
-
-# Register in config/hooks.yaml
-hooks:
-  - name: slack_notification
-    type: custom
-    priority: 90
-    enabled: true
-    events: ["task.completed", "task.failed"]
-    module: user_extensions.hooks.custom_hooks
-    class: SlackNotificationHook
-    config:
-      webhook_url: "${SLACK_WEBHOOK_URL}"
-```
-
-### Using HITL for Critical Operations
-
-```python
-# Mark tool as requiring approval
-class DestructiveTool(Tool):
-    definition = ToolDefinition(
-        name="delete_database",
-        description="Permanently delete a database",
-        parameters=[...],
-        requires_approval=True  # <-- Triggers HITL
-    )
-
-    async def execute(self, db_name: str) -> ToolResult:
-        # This will only execute after user approval
-        ...
-```
-
-### Task Decomposition (Phase 3)
-
-```python
-# User creates high-level task
-await task_manager.create_task(
-    title="Migrate database to PostgreSQL",
-    description="Migrate from MySQL to PostgreSQL"
-)
-
-# LLM decomposes into subtasks:
-subtasks = [
-    "Export MySQL schema",
-    "Convert schema to PostgreSQL syntax",
-    "Export MySQL data",
-    "Transform data for PostgreSQL",
-    "Import schema to PostgreSQL",
-    "Import data to PostgreSQL",
-    "Verify data integrity",
-    "Update application configuration"
-]
-
-for i, subtask_title in enumerate(subtasks):
-    await task_manager.create_subtask(
-        parent_id=parent_task.id,
-        title=subtask_title,
-        depends_on=[subtasks[i-1].id] if i > 0 else []
-    )
-```
-
-### Spawning a Subagent (Phase 4)
-
-```python
-# Parent task delegates to subagent
-parent_task = await task_manager.get_task(task_id)
-
-subtask = await task_manager.create_task(
-    title="Research best PostgreSQL migration tools",
-    description="Find and compare tools for MySQL to PostgreSQL migration"
-)
-
-subagent_handle = await subagent_manager.spawn(
-    parent_task=parent_task,
-    subtask=subtask,
-    context={"domain": "database migration"},
-    constraints={
-        "max_tokens": 30000,
-        "timeout_seconds": 180,
-        "allowed_tools": ["web_fetch", "file_read"],
-        "skill": "research"
-    }
-)
-
-result = await subagent_handle.wait()
-```
+- **Anthropic API Docs**: https://docs.anthropic.com/
+- **ReAct Paper**: https://arxiv.org/abs/2210.03629
+- **BDI Architecture**: https://en.wikipedia.org/wiki/Belief-desire-intention_model
+- **Project Issues**: https://github.com/godofpdog/simple_orchestrator/issues
 
 ---
 
 ## Configuration
 
-### Main Configuration
+Configuration is loaded from `config/default.yaml` with optional overrides in `config/local.yaml`.
 
-Located at `config/default.yaml`. See complete schema in Architecture Deep Dive section.
-
-Key settings:
-- `llm.anthropic.model` - Claude model version
-- `tools.bash.blocked_commands` - Safety patterns
-- `tasks.max_retries` - Global retry limit
-- `logging.level` - Verbosity
-
-### Local Overrides
-
-Create `config/local.yaml` (gitignored) for personal settings:
+### Key Configuration Sections
 
 ```yaml
 llm:
+  provider: anthropic
   anthropic:
-    max_tokens: 4096  # Override default
-    temperature: 0.5
+    model: claude-sonnet-4-20250514
+    max_tokens: 8192
+    temperature: 0.7
 
-logging:
-  level: DEBUG  # More verbose locally
+workspace:  # Phase 5B
+  enabled: true
+  workspace_dir: ".orchestrator/workspace_state"
+  max_task_summaries: 10
+
+tools:
+  bash:
+    enabled: true
+    requires_approval: true
+    blocked_commands: ["rm -rf /", "mkfs", ...]
+
+  file_read:
+    enabled: true
+    max_file_size_mb: 10
+
+hooks:
+  enabled: true
+  directories: ["./user_extensions/hooks"]
+
+skills:
+  enabled: true
+  builtin_path: "src/orchestrator/skills/builtin"
+  user_path: "user_extensions/skills"
+
+subagents:
+  enabled: true
+  max_concurrent: 3
+  default_constraints:
+    max_tokens: 50000
+    timeout_seconds: 300
+
+cache:  # Phase 5A
+  enabled: true
+  ttl: 3600
+  max_entries: 1000
 ```
 
-### Environment Variables
+**Full Configuration Reference**: See [`docs/development/configuration.md`](docs/development/configuration.md)
 
-Required:
-- `ANTHROPIC_API_KEY` - Your Anthropic API key
+---
 
-Optional:
-- `ORCHESTRATOR_CONFIG` - Path to custom config file
-- `ORCHESTRATOR_LOG_LEVEL` - Override log level
-- `ORCHESTRATOR_STATE_DIR` - State directory (default: `.orchestrator/`)
+## Common Tasks
+
+### Run Tests
+
+```bash
+# All tests
+pytest
+
+# Specific test file
+pytest tests/unit/test_tools.py
+
+# With coverage
+pytest --cov=orchestrator --cov-report=html
+
+# Integration tests (requires API key)
+export ANTHROPIC_API_KEY=sk-ant-xxx
+pytest tests/integration/
+```
+
+### Check Code Quality
+
+```bash
+# Linting
+ruff check src/
+
+# Formatting
+black src/
+
+# Type checking
+mypy src/
+```
+
+### Manage Workspace
+
+```bash
+# List all workspace sessions
+orchestrator workspace list
+
+# Delete specific workspace
+orchestrator workspace delete <session-id>
+
+# Purge old workspaces
+orchestrator workspace purge --older-than 30
+```
 
 ---
 
 ## Troubleshooting
 
-### Rate Limit Errors (429 Too Many Requests)
+### Rate Limit Errors (429)
 
-**Symptom**: `HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 429 Too Many Requests"`
+**Symptom**: `HTTP/1.1 429 Too Many Requests`
 
-**What This Means**:
-You've exceeded Anthropic's API rate limits. Rate limits are measured in:
-- **RPM (Requests Per Minute)** - Number of API calls per minute
-- **ITPM (Input Tokens Per Minute)** - Input tokens consumed per minute
-- **OTPM (Output Tokens Per Minute)** - Output tokens generated per minute
-
-**Why It Happens**:
-1. **Low Usage Tier**: New accounts start at Tier 1 with very restrictive limits
-2. **Rapid Requests**: ReAct loop makes multiple LLM calls in quick succession (up to 20 iterations)
-3. **Large Context**: High token usage in complex tasks
-
-**Solution (Automatic)**:
-As of Phase 2.7, the orchestrator **automatically retries** with exponential backoff:
-- Attempt 1: Wait 2 seconds, retry
-- Attempt 2: Wait 4 seconds, retry
-- Attempt 3: Wait 8 seconds, retry
-- Attempt 4: Wait 16 seconds, retry
-- Attempt 5: Wait 32 seconds, retry
-- After 5 retries: Task fails with clear error message
-
-**Manual Solutions**:
-
-1. **Check Your Usage Tier**:
-   - Visit https://console.anthropic.com/settings/limits
-   - Higher tiers have much higher rate limits
-   - Tier automatically increases as you use more API credits
-
-2. **Enable Request Throttling** (optional):
-   ```yaml
-   # config/default.yaml or config/local.yaml
-   llm:
-     anthropic:
-       throttle:
-         enabled: true  # Prevents rapid consecutive requests
-         min_request_interval: 0.5  # Wait 0.5s between requests
-   ```
-
-3. **Adjust Retry Settings** (if needed):
-   ```yaml
-   llm:
-     anthropic:
-       retry:
-         max_retries: 10  # More retries for low-tier accounts
-         base_delay: 3.0  # Longer initial wait
-         max_delay: 120.0  # Allow up to 2 minutes between retries
-   ```
-
-4. **Reduce Task Complexity**:
-   - Break large tasks into smaller subtasks
-   - Use simpler prompts to reduce iterations
-   - Lower `orchestrator.max_iterations` from 20 to 10
-
-**Understanding Usage Tiers**:
-- **Tier 1** (New accounts): Very low limits (e.g., 5 RPM, 20K ITPM)
-- **Tier 2**: Requires $5 cumulative spend
-- **Tier 3**: Requires $50 cumulative spend
-- **Tier 4**: Requires $500 cumulative spend
-
-Each tier dramatically increases rate limits. See: https://docs.anthropic.com/en/api/rate-limits
-
-**Debug Logs**:
-When 429 occurs, you'll see:
-```
-WARNING - Rate limit error (429) on attempt 1/6. Retrying in 2.0s...
-(Tip: Check your usage tier at https://console.anthropic.com/settings/limits)
-```
-
-If all retries fail:
-```
-ERROR - Rate limit error persisted after 5 retries.
-Your API usage tier may be too low.
-Check https://console.anthropic.com/settings/limits
-```
+**Solution**: Automatic retry with exponential backoff (Phase 2.7). Check your Anthropic usage tier at https://console.anthropic.com/settings/limits
 
 ### API Key Not Found
 
-**Symptom**: `Error: ANTHROPIC_API_KEY environment variable not set`
+**Symptom**: `ANTHROPIC_API_KEY environment variable not set`
 
 **Solution**:
 1. Check `.env` file exists: `ls -la .env`
 2. Verify key is set: `grep ANTHROPIC_API_KEY .env`
-3. Ensure no quotes: `ANTHROPIC_API_KEY=sk-ant-xxx` (not `"sk-ant-xxx"`)
-4. Restart shell or re-run `source .venv/bin/activate`
+3. No quotes: `ANTHROPIC_API_KEY=sk-ant-xxx` (not `"sk-ant-xxx"`)
+4. Restart shell or `source .venv/bin/activate`
 
 ### Tool Not Found
 
@@ -2309,179 +472,19 @@ Check https://console.anthropic.com/settings/limits
 
 **Solution**:
 1. Check tool is registered: `orchestrator tool list`
-2. Verify tool is enabled in config:
-   ```yaml
-   tools:
-     my_tool:
-       enabled: true
-   ```
-3. Check registration in `ToolRegistry._register_builtin_tools()` or user_extensions
+2. Verify enabled in config: `tools.my_tool.enabled: true`
+3. Check registration in `ToolRegistry._register_builtin_tools()`
 
-### LLM Not Using Tools
-
-**Symptom**: LLM responds with text instead of calling tools
-
-**Possible Causes**:
-1. Tools not passed to API - check `_reasoning_loop()` passes `tools` parameter
-2. Tool descriptions unclear - improve `description` and `parameters.description`
-3. Task doesn't require tools - LLM correctly determined text response is sufficient
-
-**Debug**:
-```python
-# Add logging in _reasoning_loop()
-logger.debug(f"Calling LLM with {len(tools)} tools: {[t['name'] for t in tools]}")
-```
-
-### Import Errors
-
-**Symptom**: `ModuleNotFoundError: No module named 'orchestrator'`
-
-**Solution**:
-1. Ensure in virtual environment: `which python` should show `.venv/bin/python`
-2. Install in editable mode: `pip install -e ".[dev]"`
-3. Check `pyproject.toml` exists and has correct `[project]` section
-
-### Task Stuck in IN_PROGRESS
-
-**Symptom**: Task never completes or fails
-
-**Possible Causes**:
-1. LLM infinite loop - check conversation history for repeated patterns
-2. Tool timeout - increase `tools.bash.timeout` in config
-3. Hook blocking - check hook logs for `action="block"`
-
-**Debug**:
-```bash
-# Check state file
-cat .orchestrator/state.json | jq '.tasks[] | select(.status == "IN_PROGRESS")'
-
-# Check logs
-tail -f .orchestrator/orchestrator.log
-```
-
-### High Token Usage
-
-**Symptom**: Hitting token limits frequently
-
-**Solutions**:
-1. Reduce `max_tokens` in config
-2. Use more focused task descriptions
-3. Enable result caching (Phase 5)
-4. Use subagents with token budgets (Phase 4)
+**More Solutions**: See [`docs/development/troubleshooting.md`](docs/development/troubleshooting.md)
 
 ---
 
-## Testing Guidelines
+## License & Contributing
 
-### Unit Tests
+MIT License - see LICENSE file
 
-```bash
-# Test specific module
-pytest tests/unit/test_tools.py
-
-# Test with verbose output
-pytest tests/unit/test_tools.py -v
-
-# Test specific function
-pytest tests/unit/test_tools.py::test_bash_tool_execute
-```
-
-### Integration Tests
-
-```bash
-# Requires API key
-export ANTHROPIC_API_KEY=sk-ant-xxx
-pytest tests/integration/
-
-# Skip slow tests
-pytest tests/integration/ -m "not slow"
-```
-
-### Writing Tests
-
-```python
-# tests/unit/test_custom_tool.py
-
-import pytest
-from orchestrator.tools.base import ToolResult
-from user_extensions.tools.my_tools import MyTool
-
-@pytest.mark.asyncio
-async def test_my_tool_success():
-    tool = MyTool()
-    result = await tool.execute(input="test")
-
-    assert result.success is True
-    assert result.data == "expected output"
-
-@pytest.mark.asyncio
-async def test_my_tool_failure():
-    tool = MyTool()
-    result = await tool.execute(input="invalid")
-
-    assert result.success is False
-    assert "error" in result.error.lower()
-```
+**Contributing Guidelines**: See [`docs/development/git-workflow.md`](docs/development/git-workflow.md)
 
 ---
 
-## Deferred Features (Not in Phase 1)
-
-These features have base implementations but are not active:
-
-- ❌ Hook system execution (base classes exist)
-- ❌ Task hierarchy and dependencies (fields exist in model)
-- ❌ Subagent spawning (no manager yet)
-- ❌ HITL approval workflow (no prompts yet)
-- ❌ Skill auto-discovery (manual loading only)
-- ❌ Cross-session memory (no vector store)
-- ❌ Tool result caching (no cache layer)
-- ❌ Parallel task execution (sequential only)
-- ❌ Multiple LLM providers (Anthropic only)
-
-See phase roadmap for implementation timeline.
-
----
-
-## Contributing
-
-### Adding Features
-
-1. Check phase roadmap for planned features
-2. Create feature branch: `git checkout -b feature/my-feature`
-3. Implement with tests
-4. Update CLAUDE.md if architecture changes
-5. Submit pull request
-
-### Code Style
-
-- Use `black` for formatting: `black src/`
-- Use `ruff` for linting: `ruff check src/`
-- Type hints required: `mypy src/`
-- Docstrings for public APIs (Google style)
-
-### Commit Messages
-
-Follow conventional commits:
-```
-feat: add database query tool
-fix: resolve tool registry race condition
-docs: update skill creation guide
-test: add integration tests for hooks
-refactor: simplify task dependency resolution
-```
-
----
-
-## License
-
-MIT License - see LICENSE file for details.
-
----
-
-## Additional Resources
-
-- **Anthropic API Docs**: https://docs.anthropic.com/
-- **ReAct Paper**: https://arxiv.org/abs/2210.03629
-- **BDI Architecture**: https://en.wikipedia.org/wiki/Belief-desire-intention_model
-- **Project Issues**: https://github.com/godofpdog/simple_orchestrator/issues
+**Note**: This is the main entry point. For detailed information on specific topics, consult the documentation in `docs/development/`.
