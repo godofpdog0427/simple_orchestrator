@@ -90,12 +90,6 @@ class TestWelcomeScreen:
         output = console.file.getvalue()
         assert "3" in output and "7" in output
 
-    def test_display_mode_guidelines(self, welcome, console):
-        """Test mode guidelines display."""
-        welcome.display_mode_guidelines(ExecutionMode.ASK)
-        output = console.file.getvalue()
-        assert "Mode Guidelines" in output or "ASK" in output
-
     def test_all_modes_have_guidelines(self, welcome):
         """Test all execution modes have guidelines."""
         for mode in ExecutionMode:

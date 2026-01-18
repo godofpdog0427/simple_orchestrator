@@ -3,8 +3,8 @@
 from typing import Optional
 from rich.console import Console
 from rich.panel import Panel
-from rich.columns import Columns
 from rich.table import Table
+from rich import box
 
 from orchestrator.cli.mascot import SealMascot, MascotPose
 from orchestrator.modes.models import ExecutionMode
@@ -65,7 +65,7 @@ class WelcomeScreen:
         # Build help line
         help_line = "[dim]Type [yellow]/help[/yellow] for commands | [yellow]/quit[/yellow] to exit[/dim]"
 
-        # Left panel: Mascot + Info
+        # Left column content (mascot + info)
         left_content = (
             f"\n{greeting}\n\n"
             f"{mascot}\n\n"
@@ -73,26 +73,34 @@ class WelcomeScreen:
             f"{help_line}\n"
         )
 
-        left_panel = Panel(
-            left_content,
-            border_style=color,
-            padding=(1, 2),
-            width=50,
-        )
-
-        # Right panel: Mode Guidelines
+        # Right column content (mode guidelines)
         guidelines = self._get_mode_guidelines(mode)
-        right_panel = Panel(
-            guidelines,
-            title=f"💡 [bold]Mode Guidelines[/bold]",
-            border_style=color,
-            padding=(1, 2),
+        right_content = f"\n💡 [bold]Mode Guidelines[/bold]\n\n{guidelines}"
+
+        # Create table with 2 columns (MINIMAL_HEAVY_HEAD creates vertical divider)
+        table = Table(
+            show_header=False,
+            box=box.MINIMAL_HEAVY_HEAD,  # Creates middle vertical line │
+            padding=(0, 2),
             expand=True,
+            show_edge=False,  # No outer border (Panel will provide it)
         )
 
-        # Display side-by-side using Columns
-        columns = Columns([left_panel, right_panel], equal=False, expand=True)
-        self.console.print(columns)
+        # Add columns
+        table.add_column(width=50, vertical="top")  # Left: mascot (fixed width)
+        table.add_column(vertical="top")  # Right: guidelines (expand)
+
+        # Add single row with both contents
+        table.add_row(left_content, right_content)
+
+        # Wrap in SINGLE panel
+        panel = Panel(
+            table,
+            border_style=color,
+            padding=(1, 2),
+        )
+
+        self.console.print(panel)
 
     def _build_greeting(self, username: Optional[str] = None) -> str:
         """Build greeting text.
