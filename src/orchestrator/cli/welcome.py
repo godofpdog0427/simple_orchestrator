@@ -93,9 +93,10 @@ class WelcomeScreen:
         # Add single row with both contents
         table.add_row(left_content, right_content)
 
-        # Wrap in SINGLE panel
+        # Wrap in SINGLE panel with title
         panel = Panel(
             table,
+            title="[bold]Simple Orchestrator v0.6.5[/bold]",
             border_style=color,
             padding=(1, 2),
         )
