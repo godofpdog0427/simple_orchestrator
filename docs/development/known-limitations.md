@@ -4,11 +4,13 @@ This document tracks known limitations in the current implementation and outline
 
 ---
 
-## Bash Read-Only Mode Security
+## Bash Read-Only Mode Security (ASK Mode Only)
 
 ### Current Implementation
 
-ASK and PLAN modes allow bash for information gathering with:
+**UPDATE (Phase 6A+++)**: Bash with read-only mode is now only available in ASK mode. It has been removed from PLAN mode to prevent infinite retry loops.
+
+ASK mode allows bash for information gathering with:
 
 1. **Primary defense**: System prompt instructs LLM to use read-only operations
 2. **Safety net**: Blacklist blocks obvious dangerous commands (reboot, rm -rf /, sudo, etc.)
@@ -221,6 +223,56 @@ mount -o remount,ro /path/to/workspace
 - When accepting untrusted user input
 - When moving to production environment
 - If bash misuse patterns are observed
+
+---
+
+## Phase 6A+++ Critical Bug Fix: Bash Removed from PLAN Mode
+
+**Date**: 2026-01-18
+
+### Problem
+
+PLAN mode previously allowed bash with read-only restrictions. This caused infinite retry loops:
+- LLM tries bash command with output redirection (e.g., `python3 -c "..." > file.txt`)
+- Read-only security blocks it: "Security: Output redirection not allowed in read-only mode"
+- LLM doesn't understand this is a MODE restriction (thinks it's a command error)
+- LLM keeps retrying different approaches, getting stuck in infinite loop
+
+**User Feedback**: "plan mode 想要「執行工具」被擋掉 (被擋掉是對的)，但是就很難跳出迴圈了... 這該怎辦呢？？？"
+
+### Solution
+
+**Removed bash from PLAN mode entirely**:
+- PLAN mode purpose: Planning, not exploration
+- Exploration belongs in ASK mode (has bash + read-only)
+- PLAN mode now: file_read + web_fetch + task_decompose only
+
+### Rationale
+
+User agreed with the following reasoning:
+- Plan mode 的核心目的是「規劃」，不是「探索」
+- 探索應該在 ASK mode 做（ASK mode 有 bash + read-only）
+- 保持 Plan mode 純粹：file_read + web_fetch + task_decompose
+
+### User Benefit
+
+- No more infinite loops in PLAN mode
+- Clear separation of concerns:
+  - ASK mode: Exploration and Q&A (with bash)
+  - PLAN mode: Planning only (no bash)
+  - EXECUTE mode: Full execution (with bash)
+
+### Implementation
+
+**Modified Files**:
+- `src/orchestrator/modes/models.py`: Removed "bash" from PLAN mode allowed_tools, updated system prompt
+- `src/orchestrator/cli.py`: Added startup guidelines to explain mode restrictions
+- `tests/unit/test_mode_manager.py`: Updated test expectations
+
+**Additional Enhancement**: Startup guidelines (inspired by Claude Code CLI)
+- Display mode-specific guidelines when orchestrator starts
+- Help users understand which mode to use for which tasks
+- Markdown-formatted panel with clear explanations
 
 ---
 

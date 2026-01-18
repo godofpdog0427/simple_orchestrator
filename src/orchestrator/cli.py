@@ -46,6 +46,79 @@ async def _run_orchestrator(config: dict) -> None:
     await orchestrator.run()
 
 
+def _display_mode_guidelines(mode: str) -> None:
+    """Display mode-specific guidelines at startup (like Claude Code)."""
+    from rich.panel import Panel
+    from rich.markdown import Markdown
+
+    guidelines = {
+        "ask": """
+## ASK Mode - Q&A and Exploration
+
+**Purpose**: Research, exploration, and information gathering
+
+**What you can do**:
+- Ask questions about the codebase
+- Explore files and directories (bash + read-only)
+- Research documentation
+- Get explanations and recommendations
+
+**What you cannot do**:
+- Modify files or execute changes
+- Create tasks or subtasks
+
+**Typical use**: "What does this function do?", "Show me files in src/", "How is authentication implemented?"
+""",
+        "plan": """
+## PLAN Mode - Task Planning
+
+**Purpose**: Break down complex tasks into executable subtasks
+
+**What you can do**:
+- Read existing code to understand structure
+- Research best practices (web_fetch)
+- Create task decomposition with dependencies
+- Generate execution checklists
+
+**What you cannot do**:
+- Execute changes (file_write, bash execution)
+- Explore filesystem (use ASK mode for exploration)
+
+**Workflow**: PLAN mode creates the roadmap → Switch to EXECUTE mode to implement
+
+**Typical use**: "Plan how to implement user authentication", "Break down database migration into subtasks"
+""",
+        "execute": """
+## EXECUTE Mode - Full Execution
+
+**Purpose**: Execute tasks and make actual changes
+
+**What you can do**:
+- All tools available (file_write, bash, subagents, etc.)
+- Execute pending tasks from PLAN mode
+- Create and execute new tasks directly
+
+**What you should avoid**:
+- Creating new task decompositions (use PLAN mode first for complex tasks)
+
+**Workflow**: Simple tasks → execute directly. Complex tasks → PLAN first, then EXECUTE
+
+**Typical use**: "Create a hello.py file", "Execute the migration plan", "Run tests and fix failures"
+"""
+    }
+
+    guideline_text = guidelines.get(mode, "")
+    if guideline_text:
+        panel = Panel(
+            Markdown(guideline_text.strip()),
+            title=f"[bold cyan]Mode Guidelines: {mode.upper()}[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+        console.print(panel)
+        console.print()  # Blank line after guidelines
+
+
 async def _run_interactive(config: dict) -> None:
     """Run orchestrator in interactive chat mode."""
     from orchestrator.core.orchestrator import Orchestrator
@@ -61,10 +134,20 @@ async def _run_interactive(config: dict) -> None:
         set_display_manager(display)
     # else: display manager will be initialized in orchestrator.initialize()
 
-    console.print(Panel("Interactive Mode - Type 'exit' or 'quit' to stop", title="Orchestrator"))
-
     orchestrator = Orchestrator(config)
     await orchestrator.initialize()
+
+    # Display mode guidelines at startup (Phase 6A+++)
+    current_mode = orchestrator.mode_manager.current_mode.value if orchestrator.mode_manager else "execute"
+    _display_mode_guidelines(current_mode)
+
+    # Show welcome message with mode info
+    console.print(Panel(
+        f"[bold green]Orchestrator Interactive Mode[/bold green]\n"
+        f"Mode: [cyan]{current_mode.upper()}[/cyan] | "
+        f"Type [yellow]/help[/yellow] for commands | [yellow]/quit[/yellow] to exit",
+        border_style="green"
+    ))
 
     # Setup prompt session with history
     history_file = config.get("cli", {}).get("history_file", "./.orchestrator/history")

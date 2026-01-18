@@ -47,7 +47,7 @@ class TestModeConfigs:
         assert config.mode == ExecutionMode.PLAN
         assert "file_read" in config.allowed_tools
         assert "web_fetch" in config.allowed_tools
-        assert "bash" in config.allowed_tools  # Phase 6A++: bash allowed for read-only operations
+        assert "bash" not in config.allowed_tools  # Phase 6A+++: bash removed (caused infinite loops)
         assert "task_decompose" in config.allowed_tools
         assert "todo_list" not in config.allowed_tools  # Phase 6A+: Removed to avoid interference
         assert "subagent_spawn" not in config.allowed_tools
@@ -115,7 +115,7 @@ class TestModeManager:
         # Allowed tools
         assert manager.is_tool_allowed("file_read") is True
         assert manager.is_tool_allowed("web_fetch") is True
-        assert manager.is_tool_allowed("bash") is True  # Phase 6A++: bash allowed for read-only operations
+        assert manager.is_tool_allowed("bash") is False  # Phase 6A+++: bash removed (caused infinite loops)
         assert manager.is_tool_allowed("task_decompose") is True
 
         # Blocked tools (Note: todo_list was removed from PLAN mode in Phase 6A+)
