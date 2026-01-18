@@ -118,7 +118,9 @@ class DisplayHook(Hook):
 
         if task and hasattr(task, "title"):
             if self.is_streaming_display:
-                self.display.append_task_complete(task.title, result)
+                # UX Fix: Don't display result in streaming mode to avoid duplication
+                # (result was already shown in thinking block)
+                self.display.append_task_complete(task.title, result=None)
             else:
                 self.display.show_task_complete(task.title, result)
 
