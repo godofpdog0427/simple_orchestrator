@@ -674,6 +674,106 @@ def workspace_purge(ctx: click.Context, older_than: int) -> None:
         console.print("[yellow]Purge cancelled[/yellow]")
 
 
+# Approval Whitelist Management Commands (Phase 6D)
+
+
+@cli.group()
+@click.pass_context
+def approval(ctx: click.Context) -> None:
+    """Manage approval whitelist (Phase 6D)."""
+    # Load config for approval commands
+    config_path = ctx.obj.get("config")
+    ctx.obj["loaded_config"] = _load_config(config_path)
+
+
+@approval.command("list")
+@click.pass_context
+def approval_list(ctx: click.Context) -> None:
+    """List whitelisted tools for current workspace."""
+    import uuid
+    from rich.table import Table
+    from orchestrator.workspace.state import WorkspaceManager
+
+    config = ctx.obj.get("loaded_config", {})
+    workspace_config = config.get("workspace", {})
+    workspace_dir = workspace_config.get("workspace_dir", ".orchestrator/workspace")
+
+    # Get session_id (from config or default)
+    session_id = config.get("session_id") or str(uuid.uuid4())
+
+    # Load workspace
+    manager = WorkspaceManager(workspace_dir)
+    workspace = manager.load_or_create(session_id)
+
+    # Get whitelist
+    whitelist = workspace.user_preferences.get("approval_whitelist", {})
+    tools = whitelist.get("tools", [])
+
+    if not tools:
+        console.print("[yellow]No whitelisted tools in this workspace[/yellow]")
+        console.print(f"[dim]Session: {session_id}[/dim]")
+        return
+
+    # Display table
+    table = Table(title=f"Whitelisted Tools (Session: {session_id[:8]}...)")
+    table.add_column("Tool Name", style="cyan")
+    table.add_column("Approved At", style="green")
+    table.add_column("Match Type", style="magenta")
+
+    for entry in tools:
+        table.add_row(
+            entry["tool_name"],
+            entry["approved_at"],
+            entry.get("match_type", "tool_name_only")
+        )
+
+    console.print(table)
+
+
+@approval.command("clear")
+@click.option("--tool", type=str, help="Clear specific tool (or all if not specified)")
+@click.pass_context
+def approval_clear(ctx: click.Context, tool: str | None) -> None:
+    """Clear approval whitelist."""
+    import uuid
+    from orchestrator.workspace.state import WorkspaceManager
+
+    config = ctx.obj.get("loaded_config", {})
+    workspace_config = config.get("workspace", {})
+    workspace_dir = workspace_config.get("workspace_dir", ".orchestrator/workspace")
+
+    # Get session_id (from config or default)
+    session_id = config.get("session_id") or str(uuid.uuid4())
+
+    # Load workspace
+    manager = WorkspaceManager(workspace_dir)
+    workspace = manager.load_or_create(session_id)
+
+    # Clear whitelist
+    if tool:
+        # Clear specific tool
+        whitelist = workspace.user_preferences.get("approval_whitelist", {})
+        tools = whitelist.get("tools", [])
+        original_count = len(tools)
+        tools[:] = [t for t in tools if t["tool_name"] != tool]
+        removed = original_count - len(tools)
+
+        if removed > 0:
+            manager.save(workspace)
+            console.print(f"[green]Cleared whitelist for tool: {tool}[/green]")
+        else:
+            console.print(f"[yellow]Tool not in whitelist: {tool}[/yellow]")
+    else:
+        # Clear all
+        if "approval_whitelist" in workspace.user_preferences:
+            count = len(workspace.user_preferences["approval_whitelist"].get("tools", []))
+            workspace.user_preferences["approval_whitelist"] = {"tools": []}
+            manager.save(workspace)
+            console.print(f"[green]Cleared all {count} whitelisted tool(s)[/green]")
+        else:
+            console.print("[yellow]No whitelisted tools to clear[/yellow]")
+
+
 def main() -> None:
     """Main entry point."""
     try:

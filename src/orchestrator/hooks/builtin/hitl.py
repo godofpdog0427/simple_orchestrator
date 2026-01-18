@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from typing import Any
+from datetime import datetime
+from typing import Any, Optional
 
 from orchestrator.hooks.base import Hook, HookContext, HookResult
 
@@ -23,17 +24,19 @@ class HITLHook(Hook):
 
     priority = 50  # Medium priority, after logging but before metrics
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any], workspace: Optional[Any] = None):
         """
         Initialize HITL hook.
 
         Args:
             config: Hook configuration
+            workspace: Optional workspace reference for approval whitelist (Phase 6D)
         """
         self.config = config
         self.timeout = config.get("timeout", 300)
         self.auto_approve_safe_tools = config.get("auto_approve_safe_tools", True)
         self.prompt_format = config.get("prompt_format", "standard")
+        self.workspace = workspace  # NEW (Phase 6D): Workspace reference for whitelist
 
     async def execute(self, context: HookContext) -> HookResult:
         """
@@ -60,11 +63,23 @@ class HITLHook(Hook):
             logger.debug(f"Auto-approving safe tool: {tool_name}")
             return HookResult(action="continue")
 
-        # Prompt user for approval
-        try:
-            approved = await self._prompt_user(tool_name, tool_input)
+        # NEW (Phase 6D): Check approval whitelist
+        if self._is_whitelisted(tool_name):
+            logger.info(f"Auto-approved (whitelisted): {tool_name}")
+            return HookResult(
+                action="continue",
+                metadata={"approval_source": "whitelist"}
+            )
 
-            if approved:
+        # Prompt user for approval (with "always" option)
+        try:
+            approval_type = await self._prompt_user_enhanced(tool_name, tool_input)
+
+            if approval_type in ["yes", "always"]:
+                # Add to whitelist if "always"
+                if approval_type == "always":
+                    self._add_to_whitelist(tool_name)
+
                 logger.info(f"User approved tool execution: {tool_name}")
                 return HookResult(action="continue")
             else:
@@ -169,6 +184,103 @@ class HITLHook(Hook):
             items.append(f"{key}={value_str}")
 
         return "{" + ", ".join(items) + "}"
+
+    async def _prompt_user_enhanced(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any]
+    ) -> str:
+        """
+        Prompt user for approval with 'always' option (Phase 6D).
+
+        Args:
+            tool_name: Name of the tool
+            tool_input: Tool input parameters
+
+        Returns:
+            str: "yes", "no", or "always"
+
+        Raises:
+            asyncio.TimeoutError: If prompt times out
+        """
+        # Format prompt with three options
+        input_str = self._format_input_brief(tool_input)
+        prompt_text = (
+            f"\n⚠️  Tool '{tool_name}' requires approval\n"
+            f"   Input: {input_str}\n"
+            f"   Approve? [y/n/always]: "
+        )
+
+        # Run prompt in executor to avoid blocking
+        loop = asyncio.get_event_loop()
+
+        async def get_input():
+            return await loop.run_in_executor(None, input, prompt_text)
+
+        # Wait for user input with timeout
+        try:
+            response = await asyncio.wait_for(get_input(), timeout=self.timeout)
+            response = response.strip().lower()
+
+            if response in ["y", "yes"]:
+                return "yes"
+            elif response in ["a", "always"]:
+                return "always"
+            else:
+                return "no"
+
+        except asyncio.TimeoutError:
+            print("\n[Timeout - request denied]")
+            raise
+
+    def _is_whitelisted(self, tool_name: str) -> bool:
+        """
+        Check if tool is in approval whitelist (Phase 6D).
+
+        Args:
+            tool_name: Name of the tool to check
+
+        Returns:
+            bool: True if whitelisted, False otherwise
+        """
+        if not self.workspace:
+            return False
+
+        whitelist = self.workspace.user_preferences.get("approval_whitelist", {})
+        tools = whitelist.get("tools", [])
+
+        return any(entry["tool_name"] == tool_name for entry in tools)
+
+    def _add_to_whitelist(self, tool_name: str) -> None:
+        """
+        Add tool to approval whitelist (Phase 6D).
+
+        Args:
+            tool_name: Name of the tool to whitelist
+        """
+        if not self.workspace:
+            logger.warning("Cannot add to whitelist: no workspace reference")
+            return
+
+        # Initialize whitelist structure if needed
+        if "approval_whitelist" not in self.workspace.user_preferences:
+            self.workspace.user_preferences["approval_whitelist"] = {"tools": []}
+
+        whitelist = self.workspace.user_preferences["approval_whitelist"]
+
+        # Check if already whitelisted (avoid duplicates)
+        if self._is_whitelisted(tool_name):
+            return
+
+        # Add entry
+        whitelist["tools"].append({
+            "tool_name": tool_name,
+            "approved_at": datetime.now().isoformat(),
+            "match_type": "tool_name_only"
+        })
+
+        logger.info(f"✓ {tool_name} whitelisted for this session")
+        print(f"\n✓ {tool_name} whitelisted for this session\n")
 
     def should_run(self, context: HookContext) -> bool:
         """

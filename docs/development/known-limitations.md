@@ -236,9 +236,150 @@ When adding new known limitations:
 
 ---
 
+## HITL Session-Level Whitelist (Phase 6D)
+
+### Feature Overview
+
+Users can whitelist tools for the current session by responding "always" to approval prompts, eliminating repetitive approval requests for trusted operations.
+
+**Example**:
+```
+⚠️ Tool 'file_write' requires approval
+   Input: {content=Hello, file_path=test.txt}
+   Approve? [y/n/always]: always
+
+✓ file_write whitelisted for this session
+
+[Later in same session]
+⚠️ Tool 'file_write' requires approval
+✓ Auto-approved (whitelisted)
+```
+
+### Current Implementation
+
+**Storage Location**: `.orchestrator/workspace_state/{session_id}.json`
+
+```json
+{
+  "user_preferences": {
+    "approval_whitelist": {
+      "tools": [
+        {
+          "tool_name": "bash",
+          "approved_at": "2026-01-18T14:30:00",
+          "match_type": "tool_name_only"
+        }
+      ]
+    }
+  }
+}
+```
+
+**CLI Commands**:
+- `orchestrator approval list` - View whitelisted tools for current session
+- `orchestrator approval clear` - Clear all whitelisted tools
+- `orchestrator approval clear --tool bash` - Clear specific tool
+
+### Scope and Limitations
+
+**Session-Scoped**: Whitelist is tied to workspace session_id
+- Different projects/sessions have independent whitelists
+- Whitelist persists across orchestrator restarts (same session)
+- Cleared when workspace is deleted
+
+**Tool-Level Granularity**: Currently whitelists by tool name only
+- "always" for `bash` → **all bash commands** approved (including dangerous ones)
+- "always" for `file_write` → **all file_write operations** approved
+- No parameter-level filtering (future enhancement)
+
+**Risk Assessment**:
+- ✅ Low risk for read-only tools (file_read, web_fetch)
+- ⚠️ Medium risk for write tools (file_write, file_delete)
+- ⚠️ High risk for bash (can execute any command)
+
+**Mitigation**:
+- Clear prompt wording: "[y/n/always]"
+- User must explicitly type "always" or "a"
+- Workspace isolation limits blast radius
+- Tools can still be removed from whitelist via CLI
+
+### Why This Is Acceptable for Current Scope
+
+1. **User-initiated**: Whitelist only on explicit "always" response
+2. **Session-scoped**: No global whitelist that could affect all projects
+3. **Transparent**: CLI commands to view and manage whitelist
+4. **Reversible**: Easy to clear whitelist or specific tools
+5. **Personal project**: Single user environment, not multi-tenant
+
+### Future Enhancements
+
+#### 1. Parameter-Level Whitelisting
+```python
+# Match specific parameter patterns
+{
+    "tool_name": "bash",
+    "match_type": "tool_name_and_params",
+    "param_patterns": {
+        "command": r"^(ls|pwd|grep).*"  # Only read-only commands
+    }
+}
+```
+
+#### 2. Time-Based Expiration
+```python
+{
+    "tool_name": "file_delete",
+    "approved_at": "2026-01-18T14:30:00",
+    "expires_at": "2026-01-18T15:30:00"  # 1 hour expiration
+}
+```
+
+#### 3. Confirmation for Dangerous Tools
+```python
+# Before whitelisting dangerous tools, ask for confirmation
+if tool_name in ["file_delete", "bash"]:
+    confirm = input("⚠️ Warning: This will allow ALL future operations. Confirm? [y/N]: ")
+    if confirm.lower() not in ["y", "yes"]:
+        return "yes"  # One-time approval instead
+```
+
+#### 4. Global Whitelist (Cross-Session)
+```yaml
+# File: .orchestrator/global_whitelist.yaml
+global_approvals:
+  - tool_name: bash
+    match_type: tool_name_only
+  - tool_name: file_read
+    match_type: tool_name_only
+```
+
+#### 5. Smart Pattern Learning
+Use LLM to analyze approval history and suggest whitelist patterns:
+```
+System: "You've approved 'bash' for ls/grep/find 10 times.
+         Would you like to whitelist bash for read-only operations? [y/n]"
+```
+
+### Decision Log
+
+**2026-01-18**: Implemented session-level approval whitelist (Phase 6D)
+- Rationale: Improve UX for repetitive approval prompts, inspired by Claude Code
+- Implementation: Tool-level whitelist in workspace.user_preferences
+- Risk acceptance: Tool-level granularity acceptable for personal project scope
+- Mitigation: Session-scoped, user-initiated, reversible via CLI
+
+**Review Trigger**:
+- When deploying to multi-user environment
+- When accepting untrusted user input
+- When moving to production environment
+- If accidental over-approval patterns observed
+
+---
+
 ## Related Documentation
 
 - [Architecture](architecture.md) - Overall system design
 - [Implementation Status](implementation-status.md) - Current phase status
 - [Security Considerations](security.md) - General security guidelines (future)
 - [Phase 6A++ Plan](/Users/liuyi/.claude/plans/hazy-cooking-meerkat.md) - Read-only bash implementation details
+- [Phase 6D Plan](/Users/liuyi/.claude/plans/hazy-cooking-meerkat.md) - HITL approval whitelist implementation

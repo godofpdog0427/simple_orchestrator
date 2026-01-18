@@ -273,6 +273,9 @@ class Orchestrator:
             logger.info(f"Loaded workspace: {session_id}")
             logger.info(f"Workspace has {len(self.workspace.task_summaries)} task summaries")
 
+            # NEW (Phase 6D): Inject workspace into HITLHook for approval whitelist
+            self._inject_workspace_to_hitl_hook()
+
         logger.info("Orchestrator initialized successfully")
 
     async def shutdown(self) -> None:
@@ -304,6 +307,25 @@ class Orchestrator:
             logger.info(f"Restored working directory: {self.original_cwd}")
 
         logger.info("Orchestrator shutdown complete")
+
+    def _inject_workspace_to_hitl_hook(self) -> None:
+        """
+        Inject workspace reference into HITLHook instances (Phase 6D).
+
+        This allows HITLHook to access and persist approval whitelist.
+        """
+        if not self.workspace or not self.hook_engine:
+            return
+
+        # Import HITLHook to check instance type
+        from orchestrator.hooks.builtin.hitl import HITLHook
+
+        # Find HITLHook instances and inject workspace
+        for hooks in self.hook_engine.hooks.values():
+            for hook in hooks:
+                if isinstance(hook, HITLHook):
+                    hook.workspace = self.workspace
+                    logger.debug("Injected workspace into HITLHook for approval whitelist")
 
     def _create_orchestrator_instance(self, config: dict) -> "Orchestrator":
         """
@@ -1198,6 +1220,10 @@ If you need more information from the user, ask clearly and specifically."""
             "tool.after_execute",
             {"tool_name": tool_name, "tool_input": tool_args, "success": result.success, "result": result},
         )
+
+        # NEW (Phase 6D): Save workspace after tool execution to persist whitelist changes
+        if self.workspace and self.workspace_manager:
+            self.workspace_manager.save(self.workspace)
 
         return result
 
