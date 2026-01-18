@@ -187,15 +187,26 @@ async def _run_interactive(config: dict) -> None:
                         console.print("[green]✓ Switched to EXECUTE mode[/green]")
 
                         if pending_tasks:
-                            # Execute all pending tasks
-                            console.print("\n[bold green]Starting execution...[/bold green]\n")
+                            # Execute all pending tasks automatically
+                            console.print("\n[bold green]Executing plan...[/bold green]\n")
                             exec_result = await orchestrator._execute_all_pending_tasks()
 
                             if orchestrator.workspace and exec_result:
                                 orchestrator.workspace.add_assistant_message(exec_result)
                         else:
-                            # No pending tasks - ready for direct execution
-                            console.print("\n[green]Ready to execute. Please enter your next command.[/green]")
+                            # No pending tasks - execute simple task directly
+                            console.print("\n[bold green]Executing task...[/bold green]\n")
+
+                            # Auto-fill user input to execute directly
+                            auto_input = "Please execute the plan"
+                            result = await orchestrator.process_input(auto_input)
+
+                            if result:
+                                console.print(result)
+
+                            if orchestrator.workspace and result:
+                                orchestrator.workspace.add_user_message(auto_input)
+                                orchestrator.workspace.add_assistant_message(result)
                     else:
                         # Option 2 or any other input - continue planning
                         console.print("[yellow]Continuing in PLAN mode...[/yellow]")
