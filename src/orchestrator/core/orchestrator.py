@@ -230,7 +230,7 @@ class Orchestrator:
         logger.info(f"Mode manager initialized in {default_mode.value} mode")
 
         # Update bash tool with read-only mode based on current mode (Phase 6A++)
-        bash_tool = self.tool_registry.get_tool("bash")
+        bash_tool = self.tool_registry.get("bash")
         if bash_tool:
             read_only = default_mode in [ExecutionMode.ASK, ExecutionMode.PLAN]
             bash_tool.read_only_mode = read_only
@@ -333,7 +333,7 @@ class Orchestrator:
         logger.info(f"Switched to {mode.value} mode")
 
         # Update bash tool read-only mode (Phase 6A++)
-        bash_tool = self.tool_registry.get_tool("bash")
+        bash_tool = self.tool_registry.get("bash")
         if bash_tool:
             from orchestrator.modes.models import ExecutionMode
             read_only = mode in [ExecutionMode.ASK, ExecutionMode.PLAN]
