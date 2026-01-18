@@ -125,12 +125,11 @@ class StreamingDisplayManager:
         if not self._enabled or not text.strip():
             return
 
-        # Issue 3: Add spacing before
+        # UX Fix: Add spacing before thinking block
         self.console.print("\n● Thinking", style="bold cyan")
-        # Issue 2: Change from dim to cyan
-        # Issue 4: Stream text char-by-char
+        # UX Fix: Change thinking content from cyan to white for better readability
         self.console.print("  ", end="")  # Indentation
-        self._stream_text(text, style="cyan")
+        self._stream_text(text, style="white")
 
     def append_tool_execution(self, tool_name: str, args: dict[str, Any]) -> None:
         """
@@ -216,10 +215,10 @@ class StreamingDisplayManager:
 
         self.console.print(f"\n● Task Complete  {task_title}", style="bold green")
         if result:
-            # Issue 4: Stream result text line-by-line
+            # UX Fix: Change from "dim" to "white" for better visibility
             for line in str(result).splitlines():
                 self.console.print("  ", end="")  # Indentation
-                self._stream_text(line, style="dim")
+                self._stream_text(line, style="white")
 
     def append_task_failed(self, task_title: str, error: str) -> None:
         """
