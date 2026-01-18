@@ -31,6 +31,7 @@ MODE_CONFIGS = {
         allowed_tools=[
             "file_read",
             "web_fetch",
+            "bash",  # Read-only bash for information gathering
             "todo_list",  # Allow todo tracking in all modes
         ],
         system_prompt_suffix="""
@@ -44,6 +45,10 @@ Answer questions, gather information, and provide explanations using available r
 Available Tools:
 - file_read: Read and analyze files to understand code structure
 - web_fetch: Fetch documentation and external resources
+- bash: Execute read-only shell commands for information gathering
+  Examples: ls, grep, find, cat, head, tail, wc, pwd, tree
+  Purpose: Navigate filesystem, search content, inspect file properties
+  Important: Use bash responsibly for read-only operations only. The system blocks obviously dangerous commands (reboot, rm -rf /, sudo, etc.).
 - todo_list: Track research progress and organize findings
 
 Workflow:
@@ -65,6 +70,7 @@ Focus on providing thorough, accurate answers while respecting the read-only nat
         allowed_tools=[
             "file_read",
             "web_fetch",
+            "bash",  # Read-only bash for exploration
             "task_decompose",  # Removed todo_list to avoid interference
         ],
         system_prompt_suffix="""
@@ -101,6 +107,9 @@ Planning Workflow for Complex Tasks:
 Available Tools:
 - file_read: Understand existing code and architecture patterns
 - web_fetch: Research documentation and best practices
+- bash: Execute read-only commands for exploration
+  Examples: ls -la, grep -r "pattern" ., find . -name "*.py"
+  Important: Use for information gathering only. Modification commands are blocked.
 - task_decompose: Create structured task hierarchies (use for complex tasks only)
 
 Expected Output:

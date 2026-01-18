@@ -36,8 +36,8 @@ class TestModeConfigs:
         assert config.mode == ExecutionMode.ASK
         assert "file_read" in config.allowed_tools
         assert "web_fetch" in config.allowed_tools
+        assert "bash" in config.allowed_tools  # Phase 6A++: bash allowed for read-only operations
         assert "todo_list" in config.allowed_tools
-        assert "bash" not in config.allowed_tools
         assert "file_write" not in config.allowed_tools
         assert len(config.system_prompt_suffix) > 0
 
@@ -46,9 +46,10 @@ class TestModeConfigs:
         config = MODE_CONFIGS[ExecutionMode.PLAN]
         assert config.mode == ExecutionMode.PLAN
         assert "file_read" in config.allowed_tools
+        assert "web_fetch" in config.allowed_tools
+        assert "bash" in config.allowed_tools  # Phase 6A++: bash allowed for read-only operations
         assert "task_decompose" in config.allowed_tools
-        assert "todo_list" in config.allowed_tools
-        assert "bash" not in config.allowed_tools
+        assert "todo_list" not in config.allowed_tools  # Phase 6A+: Removed to avoid interference
         assert "subagent_spawn" not in config.allowed_tools
         assert len(config.system_prompt_suffix) > 0
 
@@ -98,10 +99,10 @@ class TestModeManager:
         # Allowed tools
         assert manager.is_tool_allowed("file_read") is True
         assert manager.is_tool_allowed("web_fetch") is True
+        assert manager.is_tool_allowed("bash") is True  # Phase 6A++: bash allowed for read-only operations
         assert manager.is_tool_allowed("todo_list") is True
 
         # Blocked tools
-        assert manager.is_tool_allowed("bash") is False
         assert manager.is_tool_allowed("file_write") is False
         assert manager.is_tool_allowed("file_delete") is False
         assert manager.is_tool_allowed("subagent_spawn") is False
@@ -114,11 +115,10 @@ class TestModeManager:
         # Allowed tools
         assert manager.is_tool_allowed("file_read") is True
         assert manager.is_tool_allowed("web_fetch") is True
-        assert manager.is_tool_allowed("todo_list") is True
+        assert manager.is_tool_allowed("bash") is True  # Phase 6A++: bash allowed for read-only operations
         assert manager.is_tool_allowed("task_decompose") is True
 
-        # Blocked tools
-        assert manager.is_tool_allowed("bash") is False
+        # Blocked tools (Note: todo_list was removed from PLAN mode in Phase 6A+)
         assert manager.is_tool_allowed("file_write") is False
         assert manager.is_tool_allowed("file_delete") is False
         assert manager.is_tool_allowed("subagent_spawn") is False
@@ -154,14 +154,14 @@ class TestModeManager:
 
         filtered = manager.filter_tool_schemas(all_schemas)
 
-        # Should only include allowed tools
+        # Should only include allowed tools (Phase 6A++: bash now allowed)
         filtered_names = {schema["name"] for schema in filtered}
         assert "file_read" in filtered_names
         assert "web_fetch" in filtered_names
         assert "todo_list" in filtered_names
-        assert "bash" not in filtered_names
+        assert "bash" in filtered_names  # Phase 6A++: bash allowed for read-only operations
         assert "file_write" not in filtered_names
-        assert len(filtered) == 3
+        assert len(filtered) == 4  # file_read, web_fetch, bash, todo_list
 
     def test_filter_tool_schemas_execute_mode(self):
         """Test all tools pass through in EXECUTE mode."""

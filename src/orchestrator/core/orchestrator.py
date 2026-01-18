@@ -229,6 +229,13 @@ class Orchestrator:
         self.mode_manager = ModeManager(initial_mode=default_mode)
         logger.info(f"Mode manager initialized in {default_mode.value} mode")
 
+        # Update bash tool with read-only mode based on current mode (Phase 6A++)
+        bash_tool = self.tool_registry.get_tool("bash")
+        if bash_tool:
+            read_only = default_mode in [ExecutionMode.ASK, ExecutionMode.PLAN]
+            bash_tool.read_only_mode = read_only
+            logger.info(f"Bash tool read_only_mode set to {read_only} for {default_mode.value} mode")
+
         # Initialize subagent manager (Phase 4B)
         subagent_config = self.config.get("subagents", {})
         # Pass base config for subagent orchestrators
@@ -324,6 +331,14 @@ class Orchestrator:
 
         self.mode_manager.set_mode(mode)
         logger.info(f"Switched to {mode.value} mode")
+
+        # Update bash tool read-only mode (Phase 6A++)
+        bash_tool = self.tool_registry.get_tool("bash")
+        if bash_tool:
+            from orchestrator.modes.models import ExecutionMode
+            read_only = mode in [ExecutionMode.ASK, ExecutionMode.PLAN]
+            bash_tool.read_only_mode = read_only
+            logger.info(f"Bash tool read_only_mode updated to {read_only} for {mode.value} mode")
 
     async def run(self) -> None:
         """
