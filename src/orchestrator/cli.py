@@ -254,11 +254,21 @@ def start(ctx: click.Context) -> None:
 
 
 @cli.command()
+@click.option(
+    "--mode",
+    "-m",
+    type=click.Choice(["ask", "plan", "execute"], case_sensitive=False),
+    help="Execution mode (ask/plan/execute)",
+)
 @click.pass_context
-def chat(ctx: click.Context) -> None:
+def chat(ctx: click.Context, mode: Optional[str]) -> None:
     """Start orchestrator in interactive chat mode."""
     config_path = ctx.obj.get("config")
     config = _load_config(config_path)
+
+    # Override config mode if specified via CLI
+    if mode:
+        config["mode"] = mode.lower()
 
     try:
         asyncio.run(_run_interactive(config))
