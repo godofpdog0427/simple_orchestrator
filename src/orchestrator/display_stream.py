@@ -248,6 +248,25 @@ class StreamingDisplayManager:
         # Issue 5: Add spacing before and after
         self.console.print(f"\n[Iteration {current}/{maximum}]\n", style="dim")
 
+    def append_subtask_progress(self, current: int, total: int, task_title: str) -> None:
+        """
+        Display subtask execution progress.
+
+        Args:
+            current: Current subtask number (1-indexed)
+            total: Total number of subtasks
+            task_title: Title of current subtask
+        """
+        if not self._enabled:
+            return
+
+        # Progress bar style display
+        progress = f"[{current}/{total}]"
+        self.console.print(
+            f"\n▶ Subtask {progress} {task_title}",
+            style="bold cyan"
+        )
+
     # Backward compatibility with DisplayManager interface
 
     def show_thinking(self, text: str) -> None:

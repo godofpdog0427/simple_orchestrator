@@ -67,8 +67,7 @@ If the user asks you to DO something that requires modification:
         allowed_tools=[
             "file_read",
             "web_fetch",
-            "todo_list",
-            "task_decompose",
+            "task_decompose",  # Removed todo_list to avoid interference
         ],
         system_prompt_suffix="""
 **CURRENT MODE: PLAN (Planning Only)**
@@ -81,33 +80,31 @@ Required Workflow for Complex Tasks:
 1. Use file_read to understand existing code structure (if relevant)
 2. Use task_decompose to create subtasks with clear titles and descriptions
 3. Use task_decompose with add_dependency to set execution order
-4. Use todo_list to create detailed execution checklist
 
 Capabilities:
 - Read files and web content for context (file_read, web_fetch)
 - Create task decomposition plans (task_decompose) ← USE THIS!
-- Create TODO lists to outline steps (todo_list) ← USE THIS!
 
 Restrictions:
 - You CANNOT execute commands (bash)
 - You CANNOT write or modify files (file_write, file_delete)
 - You CANNOT spawn subagents for execution (subagent_spawn)
+- You CANNOT use todo_list (use task_decompose instead for planning)
 
 Expected Output Structure:
 1. Call task_decompose multiple times to create subtasks
 2. Call add_dependency to establish task relationships
-3. Call todo_list to create execution checklist
-4. Brief text summary explaining the plan rationale
+3. Brief text summary explaining the plan rationale
 
 Focus on:
 1. Breaking down complex tasks into 3-10 subtasks using task_decompose
 2. Setting clear dependencies between subtasks
-3. Creating detailed TODO lists (10-30 items)
-4. Designing implementation strategies with clear phases
+3. Designing implementation strategies with clear phases
+4. Each subtask should have a clear, actionable title and description
 
 If the user wants execution:
 - Explain that subtasks have been created and are ready
-- Suggest they switch to EXECUTE mode with: /mode execute
+- The system will prompt to execute automatically
 """
     ),
 

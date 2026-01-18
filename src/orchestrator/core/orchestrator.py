@@ -678,14 +678,8 @@ class Orchestrator:
         summary_parts.append(f"Plan: {planning_task.title}")
         summary_parts.append("=" * 60)
 
-        # Add todo list if present
-        if planning_task.todo_list:
-            summary_parts.append("\n📋 TODO List:")
-            for i, todo_item in enumerate(planning_task.todo_list, 1):
-                status_emoji = "✓" if todo_item.status == "completed" else "○"
-                summary_parts.append(f"  {i}. {status_emoji} {todo_item.content}")
-
         # Get subtasks created by task_decompose
+        # Note: Removed todo_list display as it's no longer used in PLAN mode
         subtasks = await self.task_manager.list_tasks(parent_id=planning_task.id)
         if subtasks:
             summary_parts.append(f"\n🔨 Subtasks Created ({len(subtasks)}):")
@@ -720,6 +714,7 @@ class Orchestrator:
             return "No pending tasks to execute."
 
         logger.info(f"Executing {len(pending_tasks)} pending tasks")
+        total_tasks = len(pending_tasks)
         executed_count = 0
         failed_count = 0
 
@@ -736,6 +731,13 @@ class Orchestrator:
                 # No executable tasks found - check for circular dependencies
                 logger.warning("No executable tasks found - possible circular dependency")
                 break
+
+            # UX Enhancement: Display task progress
+            task_number = executed_count + failed_count + 1
+            if hasattr(self.display_manager, 'append_subtask_progress'):
+                self.display_manager.append_subtask_progress(
+                    task_number, total_tasks, executable_task.title
+                )
 
             # Execute the task
             try:
@@ -773,10 +775,22 @@ class Orchestrator:
 
         logger.info(f"Executing {len(subtasks)} subtasks of {parent_id}")
 
+        # UX Enhancement: Display total number of subtasks
+        total_subtasks = len(subtasks)
+        executed_count = 0
+
         for subtask in subtasks:
             if subtask.status == TaskStatus.PENDING:
                 # Check if dependencies are met
                 if await self._are_dependencies_met(subtask):
+                    executed_count += 1
+
+                    # UX Enhancement: Display subtask progress
+                    if hasattr(self.display_manager, 'append_subtask_progress'):
+                        self.display_manager.append_subtask_progress(
+                            executed_count, total_subtasks, subtask.title
+                        )
+
                     # Execute subtask with isolated context
                     await self._execute_task(subtask)
 

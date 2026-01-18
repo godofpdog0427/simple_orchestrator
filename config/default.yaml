@@ -1,11 +1,11 @@
 orchestrator:
   name: "simple-orchestrator"
-  max_iterations: 30
+  max_iterations: 50
   debug: false
   working_directory: "./.orchestrator/workspace"  # Isolated workspace for Agent operations (Phase 3.5)
 
 # Execution Mode (Phase 6A)
-mode: "execute"  # Current execution mode: ask, plan, execute
+mode: "plan"  # Current execution mode: ask, plan, execute
 
 llm:
   provider: "anthropic"

@@ -77,12 +77,34 @@ async def _run_interactive(config: dict) -> None:
             try:
                 # Get current mode for prompt indicator (Phase 6A+)
                 mode_indicator = ""
+                mode_color = "white"
                 if orchestrator.mode_manager:
                     mode = orchestrator.mode_manager.current_mode
-                    mode_indicator = f" [{mode.value.upper()}]"
+                    # Different colors for different modes
+                    if mode.value == "ask":
+                        mode_color = "cyan"
+                    elif mode.value == "plan":
+                        mode_color = "yellow"
+                    elif mode.value == "execute":
+                        mode_color = "green"
 
-                # Get user input with mode indicator
-                user_input = await session.prompt_async(f"orchestrator{mode_indicator}> ")
+                    from rich.text import Text
+                    mode_text = Text()
+                    mode_text.append(" [", style="white")
+                    mode_text.append(mode.value.upper(), style=f"bold {mode_color}")
+                    mode_text.append("]", style="white")
+                    mode_indicator = mode_text
+
+                # Get user input with colored mode indicator
+                from prompt_toolkit.formatted_text import HTML
+                if mode_indicator:
+                    # Convert Rich Text to prompt_toolkit format
+                    mode_str = f" [<style fg='{mode_color}' bold>{orchestrator.mode_manager.current_mode.value.upper()}</style>]"
+                    prompt_text = f"orchestrator{mode_str}> "
+                else:
+                    prompt_text = "orchestrator> "
+
+                user_input = await session.prompt_async(HTML(prompt_text))
 
                 if not user_input.strip():
                     continue
@@ -152,6 +174,32 @@ async def _run_interactive(config: dict) -> None:
                 # NEW (Phase 5B): Add assistant response to workspace conversation
                 if orchestrator.workspace and result:
                     orchestrator.workspace.add_assistant_message(result)
+
+                # UX Enhancement: Auto-prompt to execute after planning (Phase 6A+)
+                if orchestrator.mode_manager and orchestrator.mode_manager.current_mode.value == "plan":
+                    # Check if there are pending tasks from planning
+                    from orchestrator.tasks.models import TaskStatus
+                    pending_tasks = await orchestrator.task_manager.list_tasks(status=TaskStatus.PENDING)
+
+                    if pending_tasks:
+                        # Ask user if they want to execute now
+                        console.print("\n[bold yellow]Planning complete![/bold yellow]")
+                        execute_prompt = await session.prompt_async(
+                            HTML("<ansiyellow>Execute plan now? (y/n): </ansiyellow>")
+                        )
+
+                        if execute_prompt.strip().lower() in ["y", "yes"]:
+                            # Switch to EXECUTE mode
+                            from orchestrator.modes.models import ExecutionMode
+                            orchestrator.set_mode(ExecutionMode.EXECUTE)
+                            console.print("[green]✓ Switched to EXECUTE mode[/green]")
+
+                            # Execute all pending tasks
+                            console.print("\n[bold green]Starting execution...[/bold green]\n")
+                            exec_result = await orchestrator._execute_all_pending_tasks()
+
+                            if orchestrator.workspace and exec_result:
+                                orchestrator.workspace.add_assistant_message(exec_result)
 
             except KeyboardInterrupt:
                 console.print("\n[yellow]Use Ctrl+D to exit[/yellow]")
