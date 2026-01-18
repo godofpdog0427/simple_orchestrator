@@ -76,8 +76,10 @@ async def _run_interactive(config: dict) -> None:
     # Get current mode
     current_mode = orchestrator.mode_manager.current_mode if orchestrator.mode_manager else ExecutionMode.EXECUTE
 
-    # Get session info
-    session_name = orchestrator.current_session.name if orchestrator.current_session else None
+    # Get session info (Phase 6B not yet implemented, so current_session doesn't exist)
+    session_name = None
+    if hasattr(orchestrator, 'current_session') and orchestrator.current_session:
+        session_name = orchestrator.current_session.name
 
     # Get task progress (optional)
     task_progress = None
