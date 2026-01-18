@@ -75,36 +75,26 @@ async def _run_interactive(config: dict) -> None:
     try:
         while True:
             try:
-                # Get current mode for prompt indicator (Phase 6A+)
-                mode_indicator = ""
-                mode_color = "white"
+                # Get user input with colored mode indicator (Phase 6A+)
                 if orchestrator.mode_manager:
                     mode = orchestrator.mode_manager.current_mode
-                    # Different colors for different modes
+                    mode_name = mode.value.upper()
+
+                    # Map mode colors to ANSI color names
                     if mode.value == "ask":
-                        mode_color = "cyan"
+                        color_tag = "ansicyan"
                     elif mode.value == "plan":
-                        mode_color = "yellow"
+                        color_tag = "ansiyellow"
                     elif mode.value == "execute":
-                        mode_color = "green"
+                        color_tag = "ansigreen"
+                    else:
+                        color_tag = "ansiwhite"
 
-                    from rich.text import Text
-                    mode_text = Text()
-                    mode_text.append(" [", style="white")
-                    mode_text.append(mode.value.upper(), style=f"bold {mode_color}")
-                    mode_text.append("]", style="white")
-                    mode_indicator = mode_text
-
-                # Get user input with colored mode indicator
-                from prompt_toolkit.formatted_text import HTML
-                if mode_indicator:
-                    # Convert Rich Text to prompt_toolkit format
-                    mode_str = f" [<style fg='{mode_color}' bold>{orchestrator.mode_manager.current_mode.value.upper()}</style>]"
-                    prompt_text = f"orchestrator{mode_str}> "
+                    from prompt_toolkit.formatted_text import HTML
+                    prompt_text = f"orchestrator [<b><{color_tag}>{mode_name}</{color_tag}></b>]> "
+                    user_input = await session.prompt_async(HTML(prompt_text))
                 else:
-                    prompt_text = "orchestrator> "
-
-                user_input = await session.prompt_async(HTML(prompt_text))
+                    user_input = await session.prompt_async("orchestrator> ")
 
                 if not user_input.strip():
                     continue
