@@ -1,6 +1,5 @@
 """Core orchestrator implementation."""
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Optional, TYPE_CHECKING
@@ -1045,13 +1044,10 @@ class Orchestrator:
                     first_token_received = False
                     stream_generator = self.llm_client.chat_stream(messages, tools=tools if tools else None)
 
-                    # Phase 7: Use interruptible streaming with periodic interrupt checks
-                    # This allows Ctrl+C to work even when waiting for LLM response
-                    stream_iter = stream_generator.__aiter__()
-                    stream_timeout = 1.0  # Check interrupt every 1 second
-
-                    while True:
-                        # === INTERRUPT CHECK POINT 2: During streaming (checked every timeout) ===
+                    # Consume stream - yields StreamChunk objects, then final LLMResponse
+                    # Phase 7: Check interrupt between chunks for responsiveness
+                    async for item in stream_generator:
+                        # === INTERRUPT CHECK POINT 2: During streaming ===
                         if self._check_interrupt():
                             logger.info("Interrupt during streaming")
                             # Stop activity indicator if still running
@@ -1059,16 +1055,6 @@ class Orchestrator:
                                 self.display_manager.stop_activity()
                             await self._handle_interrupt(task, partial_result=reasoning_text if reasoning_text else None)
                             return f"[Execution interrupted]\n\nPartial response:\n{reasoning_text}" if reasoning_text else "[Execution interrupted by user]"
-
-                        try:
-                            # Wait for next item with timeout
-                            item = await asyncio.wait_for(stream_iter.__anext__(), timeout=stream_timeout)
-                        except asyncio.TimeoutError:
-                            # Timeout just means we should check interrupt again
-                            continue
-                        except StopAsyncIteration:
-                            # Stream ended
-                            break
 
                         if isinstance(item, StreamChunk):
                             # Phase 7B: On first token, stop spinner and show thinking header
