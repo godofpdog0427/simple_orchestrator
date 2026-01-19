@@ -39,6 +39,7 @@ class Orchestrator:
         self.workspace: Optional[Any] = None  # Phase 5B workspace state
         self.summarizer: Optional[Any] = None  # Phase 5B task summarizer
         self.mode_manager: Optional[Any] = None  # Phase 6A execution mode
+        self.interrupt_controller: Optional[Any] = None  # Phase 7 interrupt handling
 
         # Setup logging
         self._setup_logging()
@@ -166,33 +167,42 @@ class Orchestrator:
 
         # Initialize display manager (Phase 5B/5C)
         # Priority: Streaming > Live > Panel
-        # If display manager is already set (e.g., by CLI), use that
-        from orchestrator.display import get_display_manager, set_display_manager
+        # Create display manager based on config
+        from orchestrator.display import get_display_manager, set_display_manager, DisplayManager
 
-        try:
-            self.display_manager = get_display_manager()
+        cli_config = self.config.get("cli", {})
+        use_streaming = cli_config.get("use_streaming_display", False)
+        use_live_display = cli_config.get("use_live_display", False)
+
+        # Check if display manager was already set externally (e.g., by CLI)
+        # Note: get_display_manager() auto-creates DisplayManager, so check type
+        existing_manager = get_display_manager()
+        is_default_manager = type(existing_manager).__name__ == "DisplayManager"
+
+        if not is_default_manager:
+            # Use externally set display manager
+            self.display_manager = existing_manager
             logger.info(f"Using existing display manager: {type(self.display_manager).__name__}")
-        except Exception:
-            # No display manager set, create one based on config
-            cli_config = self.config.get("cli", {})
-            use_streaming = cli_config.get("use_streaming_display", False)
-            use_live_display = cli_config.get("use_live_display", False)
-
-            if use_streaming:
-                from orchestrator.display_stream import StreamingDisplayManager
-                self.display_manager = StreamingDisplayManager()
-                # No need to call start_streaming() - pure output mode
-                logger.info("Created StreamingDisplayManager")
-            elif use_live_display:
-                from orchestrator.display_live import LiveDisplayManager
-                self.display_manager = LiveDisplayManager()
-                logger.info("Created LiveDisplayManager")
-            else:
-                from orchestrator.display import DisplayManager
-                self.display_manager = DisplayManager()
-                logger.info("Created DisplayManager (panel mode)")
-
+        elif use_streaming:
+            from orchestrator.display_stream import StreamingDisplayManager
+            # Get activity indicator settings (Phase 7B)
+            activity_config = cli_config.get("activity_indicator", {})
+            self.display_manager = StreamingDisplayManager(
+                activity_enabled=activity_config.get("enabled", True),
+                spinner_style=activity_config.get("spinner_style", "dots"),
+                spinner_color=activity_config.get("color", "cyan"),
+            )
             set_display_manager(self.display_manager)
+            logger.info("Created StreamingDisplayManager")
+        elif use_live_display:
+            from orchestrator.display_live import LiveDisplayManager
+            self.display_manager = LiveDisplayManager()
+            set_display_manager(self.display_manager)
+            logger.info("Created LiveDisplayManager")
+        else:
+            # Use default DisplayManager (already created by get_display_manager)
+            self.display_manager = existing_manager
+            logger.info("Created DisplayManager (panel mode)")
 
         # Initialize hook engine first
         hook_config = self.config.get("hooks", {})
@@ -880,6 +890,94 @@ class Orchestrator:
 
         return results
 
+    def _check_interrupt(self) -> bool:
+        """
+        Check if interrupt is requested and handle accordingly.
+
+        Returns:
+            True if should stop execution, False to continue
+        """
+        if not self.interrupt_controller:
+            return False
+
+        state = self.interrupt_controller.check_interrupt()
+        if state is None:
+            return False
+
+        # For any interrupt type, set should_stop flag
+        self.should_stop = True
+        logger.info(f"Interrupt detected: {state.interrupt_type.value}")
+
+        # Show interrupt status in display
+        if self.display_manager and hasattr(self.display_manager, "show_interrupt_status"):
+            self.display_manager.show_interrupt_status("Interrupt requested, finishing current operation...")
+
+        return True
+
+    async def _handle_interrupt(self, task: Task, partial_result: Optional[str] = None) -> None:
+        """
+        Handle interrupt cleanup and state preservation.
+
+        Args:
+            task: Current task being executed
+            partial_result: Any partial results to save
+        """
+        logger.info(f"Handling interrupt for task: {task.id}")
+
+        # 1. Save workspace state
+        if self.workspace and self.workspace_manager:
+            try:
+                self.workspace.add_assistant_message(
+                    f"[Execution interrupted] Task: {task.title}"
+                )
+                self.workspace_manager.save(self.workspace)
+                logger.info("Workspace saved on interrupt")
+            except Exception as e:
+                logger.error(f"Failed to save workspace on interrupt: {e}")
+
+        # 2. Update task status - reset to PENDING (not FAILED)
+        try:
+            await self.task_manager.update_task(
+                task.id,
+                {
+                    "status": TaskStatus.PENDING,
+                    "error": "Interrupted by user",
+                    "result": partial_result,
+                },
+            )
+            logger.info(f"Task {task.id} reset to PENDING after interrupt")
+        except Exception as e:
+            logger.error(f"Failed to update task on interrupt: {e}")
+
+        # 3. Cancel any active subagents
+        if self.subagent_manager:
+            try:
+                active_count = self.subagent_manager.get_active_count()
+                if active_count > 0:
+                    logger.info(f"Cancelling {active_count} active subagents")
+                    await self.subagent_manager.shutdown()
+            except Exception as e:
+                logger.error(f"Failed to cancel subagents on interrupt: {e}")
+
+        # 4. Trigger interrupt hook
+        await self._trigger_hook(
+            "orchestrator.interrupted",
+            {
+                "task_id": task.id,
+                "task_title": task.title,
+                "partial_result": partial_result,
+            },
+        )
+
+        # 5. Reset interrupt state and should_stop for next operation
+        if self.interrupt_controller:
+            await self.interrupt_controller.reset()
+        self.should_stop = False
+
+        # 6. Display completion message
+        if self.display_manager and hasattr(self.display_manager, "show_interrupt_complete"):
+            self.display_manager.show_interrupt_complete("Execution stopped. Ready for next command.")
+
     async def _reasoning_loop(self, task: Task, context: dict[str, Any]) -> Any:
         """
         Core LLM reasoning loop using Anthropic's native tool calling.
@@ -896,13 +994,20 @@ class Orchestrator:
 
         # Start live display if using LiveDisplayManager (Phase 5B)
         cli_config = self.config.get("cli", {})
-        use_live_display = cli_config.get("use_live_display", True)
+        use_streaming = cli_config.get("use_streaming_display", False)
+        use_live_display = cli_config.get("use_live_display", False)
 
         if use_live_display and hasattr(self.display_manager, 'start_live'):
             self.display_manager.start_live()
 
         try:
             for iteration in range(max_iterations):
+                # === INTERRUPT CHECK POINT 1: Before each iteration ===
+                if self._check_interrupt():
+                    logger.info(f"Interrupt at iteration {iteration + 1}")
+                    await self._handle_interrupt(task, partial_result=None)
+                    return "[Execution interrupted by user]"
+
                 logger.debug(f"Reasoning iteration {iteration + 1}/{max_iterations}")
 
                 # Prepare messages for LLM
@@ -919,21 +1024,48 @@ class Orchestrator:
                 )
 
                 # Use streaming if available (Phase 5B)
-                if use_live_display and hasattr(self.llm_client.provider, 'chat_stream'):
+                # Enable streaming for both live display and streaming display modes
+                enable_streaming = (use_live_display or use_streaming) and hasattr(self.llm_client.provider, 'chat_stream')
+                if enable_streaming:
                     from orchestrator.llm.client import StreamChunk, LLMResponse as LLMResp
 
-                    # Clear thinking zone before streaming
+                    # Clear/prepare thinking zone before streaming
                     if hasattr(self.display_manager, 'clear_thinking'):
                         self.display_manager.clear_thinking()
+
+                    # Phase 7B: Show activity indicator while waiting for first token
+                    # This provides visual feedback that the system is working
+                    if hasattr(self.display_manager, 'start_activity'):
+                        self.display_manager.start_activity("Thinking...")
 
                     # Stream response
                     reasoning_text = ""
                     response = None
+                    first_token_received = False
                     stream_generator = self.llm_client.chat_stream(messages, tools=tools if tools else None)
 
                     # Consume stream - yields StreamChunk objects, then final LLMResponse
                     async for item in stream_generator:
+                        # === INTERRUPT CHECK POINT 2: During streaming ===
+                        if self._check_interrupt():
+                            logger.info("Interrupt during streaming")
+                            # Stop activity indicator if still running
+                            if not first_token_received and hasattr(self.display_manager, 'stop_activity'):
+                                self.display_manager.stop_activity()
+                            await self._handle_interrupt(task, partial_result=reasoning_text if reasoning_text else None)
+                            return f"[Execution interrupted]\n\nPartial response:\n{reasoning_text}" if reasoning_text else "[Execution interrupted by user]"
+
                         if isinstance(item, StreamChunk):
+                            # Phase 7B: On first token, stop spinner and show thinking header
+                            if not first_token_received:
+                                first_token_received = True
+                                # Stop the "Thinking..." spinner
+                                if hasattr(self.display_manager, 'stop_activity'):
+                                    self.display_manager.stop_activity()
+                                # Show "● Thinking" header and prepare for streaming
+                                if hasattr(self.display_manager, 'start_thinking_stream'):
+                                    self.display_manager.start_thinking_stream()
+
                             # Text chunk - add to display
                             reasoning_text += item.text
                             if hasattr(self.display_manager, 'update_thinking_stream'):
@@ -941,6 +1073,13 @@ class Orchestrator:
                         elif isinstance(item, LLMResp):
                             # Final response
                             response = item
+
+                    # End thinking stream (add newline for streaming display)
+                    if first_token_received and hasattr(self.display_manager, 'end_thinking_stream'):
+                        self.display_manager.end_thinking_stream()
+                    # If no tokens were received (e.g., tool_use only), stop spinner
+                    elif not first_token_received and hasattr(self.display_manager, 'stop_activity'):
+                        self.display_manager.stop_activity()
 
                     # Verify we got a response
                     if response is None:
@@ -973,7 +1112,7 @@ class Orchestrator:
 
                     # UX Fix: In streaming mode, thinking text was already displayed
                     # Return empty to avoid duplication in Task Complete block
-                    if use_live_display and reasoning_text:
+                    if enable_streaming and reasoning_text:
                         return ""  # Empty result prevents duplicate display
                     else:
                         result = "\n".join(text_content) if text_content else "Task completed"
@@ -987,6 +1126,12 @@ class Orchestrator:
                     tool_results = []
                     for block in response.content:
                         if hasattr(block, "type") and block.type == "tool_use":
+                            # === INTERRUPT CHECK POINT 3: Before each tool execution ===
+                            if self._check_interrupt():
+                                logger.info(f"Interrupt before tool execution: {block.name}")
+                                await self._handle_interrupt(task, partial_result=reasoning_text if reasoning_text else None)
+                                return "[Execution interrupted before tool execution]"
+
                             logger.info(f"Executing tool: {block.name}")
 
                             # Update display with tool execution
@@ -1206,8 +1351,13 @@ If you need more information from the user, ask clearly and specifically."""
             if hasattr(tool, "set_task_manager"):
                 tool.set_task_manager(self.task_manager)
 
-        # Execute tool
-        result = await tool.execute(**tool_args)
+        # Execute tool with activity indicator (Phase 7B)
+        # Show spinner during tool execution for better UX feedback
+        if hasattr(self.display_manager, "show_tool_activity"):
+            async with self.display_manager.show_tool_activity(tool_name, tool_args):
+                result = await tool.execute(**tool_args)
+        else:
+            result = await tool.execute(**tool_args)
         logger.info(f"Tool result: {result.success}")
 
         # Cache successful tool results (Phase 5)

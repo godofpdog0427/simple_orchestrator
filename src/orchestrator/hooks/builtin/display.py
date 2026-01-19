@@ -171,13 +171,15 @@ class DisplayHook(Hook):
         if self.is_live_display:
             return
 
-        # Extract reasoning text from response
+        # Skip if using streaming display - already handled by start_thinking_stream
+        # in orchestrator._reasoning_loop() to avoid duplicate "● Thinking" headers
+        if self.is_streaming_display:
+            return
+
+        # Extract reasoning text from response (only for basic display)
         reasoning = data.get("reasoning_text")
         if reasoning:
-            if self.is_streaming_display:
-                self.display.append_thinking(reasoning)
-            else:
-                self.display.show_thinking(reasoning)
+            self.display.show_thinking(reasoning)
 
     def _display_tool_execution(self, data: dict[str, Any]) -> None:
         """Display tool execution start."""

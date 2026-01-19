@@ -8,7 +8,8 @@ orchestrator:
 mode: "plan"  # Current execution mode: ask, plan, execute
 
 llm:
-  provider: "anthropic"
+  provider: "azure_anthropic"  # Options: "anthropic", "azure_anthropic"
+
   anthropic:
     model: "claude-sonnet-4-20250514"
     max_tokens: 8192
@@ -26,6 +27,27 @@ llm:
     throttle:
       enabled: false  # Enable to prevent rapid consecutive requests
       min_request_interval: 0.5  # Minimum seconds between requests
+
+  # Azure-hosted Anthropic API configuration
+  # To use Azure, set provider: "azure_anthropic" above
+  azure_anthropic:
+    endpoint: "https://prod-knowledge-navigator-aoai.services.ai.azure.com/anthropic/"  # Required: Azure endpoint URL
+    deployment_name: "claude-sonnet-4-5"  # Required: Azure deployment name
+    api_key_env: "AZURE_ANTHROPIC_API_KEY"  # Environment variable for API key
+    max_tokens: 8192
+    temperature: 0.7
+
+    # Retry configuration (same as anthropic)
+    retry:
+      max_retries: 5
+      base_delay: 2.0
+      max_delay: 60.0
+      exponential_base: 2.0
+
+    # Request throttling
+    throttle:
+      enabled: false
+      min_request_interval: 0.5
 
 hooks:
   enabled: true
@@ -169,6 +191,13 @@ cli:
   history_file: "./.orchestrator/history"
   max_history_lines: 1000
 
+  # Activity indicator settings (Phase 7B)
+  # Shows animated spinner during tool execution for better UX feedback
+  activity_indicator:
+    enabled: true  # Enable/disable activity indicators
+    spinner_style: "dots"  # Options: dots, dots2, dots3, line, line2, arc, circle, bouncingBar, bouncingBall, aesthetic
+    color: "cyan"  # Rich style color for spinner
+
 # User preferences (Phase 6E)
 user:
   # Username for welcome greeting (optional)
@@ -178,3 +207,10 @@ user:
   # Preferred mascot pose for welcome screen
   # Options: happy, thinking, waving, sleeping
   mascot_pose: "waving"
+
+# Interrupt handling (Phase 7)
+interrupt:
+  enabled: true  # Enable graceful interrupt handling
+  soft_interrupt_limit: 2  # Number of soft interrupts (Ctrl+C) before escalating to hard interrupt
+  preserve_state: true  # Save workspace state on interrupt
+  cancel_subagents: true  # Cancel active subagents on interrupt
