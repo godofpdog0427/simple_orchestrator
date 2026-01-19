@@ -6,7 +6,7 @@ import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def chat(
-        self, messages: list[dict], tools: Optional[list[dict]] = None
+        self, messages: list[dict], tools: list[dict] | None = None
     ) -> LLMResponse:
         """
         Send chat request to LLM.
@@ -88,10 +88,10 @@ class AnthropicProvider(LLMProvider):
             from anthropic import AsyncAnthropic
 
             self.client = AsyncAnthropic(api_key=self.api_key)
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
                 "anthropic package not installed. Install with: pip install anthropic"
-            )
+            ) from e
 
         logger.info(f"Initialized Anthropic provider with model: {self.model}")
         logger.info(f"Retry config: max_retries={self.max_retries}, base_delay={self.base_delay}s")
@@ -112,7 +112,7 @@ class AnthropicProvider(LLMProvider):
         self.last_request_time = time.time()
 
     async def chat(
-        self, messages: list[dict], tools: Optional[list[dict]] = None
+        self, messages: list[dict], tools: list[dict] | None = None
     ) -> LLMResponse:
         """
         Send chat request to Anthropic API with retry logic.
@@ -229,7 +229,7 @@ class AnthropicProvider(LLMProvider):
 
         return False
 
-    def _get_retry_after(self, error: Exception) -> Optional[float]:
+    def _get_retry_after(self, error: Exception) -> float | None:
         """Extract retry-after value from error if available."""
         try:
             # Try to get retry_after from error object
@@ -243,7 +243,7 @@ class AnthropicProvider(LLMProvider):
         return None
 
     async def chat_stream(
-        self, messages: list[dict], tools: Optional[list[dict]] = None
+        self, messages: list[dict], tools: list[dict] | None = None
     ):
         """
         Stream chat response from Anthropic API.
@@ -309,6 +309,82 @@ class AnthropicProvider(LLMProvider):
             )
 
 
+class AzureAnthropicProvider(AnthropicProvider):
+    """Azure-hosted Anthropic Claude provider.
+
+    Uses Anthropic SDK with custom base_url to connect to Azure endpoint.
+    Inherits chat() and chat_stream() methods from AnthropicProvider.
+    """
+
+    def __init__(self, config: dict) -> None:
+        """
+        Initialize Azure Anthropic provider.
+
+        Args:
+            config: Provider configuration with Azure-specific settings
+
+        Required config keys:
+            endpoint: Azure Anthropic API endpoint URL
+            deployment_name: Azure deployment name (used as model)
+
+        Optional config keys:
+            api_key_env: Environment variable name for API key (default: AZURE_ANTHROPIC_API_KEY)
+            max_tokens, temperature, retry, throttle: Same as AnthropicProvider
+        """
+        self.config = config
+
+        # Azure-specific configuration
+        self.endpoint = config.get("endpoint")
+        self.deployment_name = config.get("deployment_name")
+
+        if not self.endpoint:
+            raise ValueError("Azure Anthropic endpoint is required")
+        if not self.deployment_name:
+            raise ValueError("Azure Anthropic deployment_name is required")
+
+        # Use deployment_name as model
+        self.model = self.deployment_name
+        self.max_tokens = config.get("max_tokens", 4096)
+        self.temperature = config.get("temperature", 0.7)
+
+        # Retry configuration
+        retry_config = config.get("retry", {})
+        self.max_retries = retry_config.get("max_retries", 5)
+        self.base_delay = retry_config.get("base_delay", 2.0)
+        self.max_delay = retry_config.get("max_delay", 60.0)
+        self.exponential_base = retry_config.get("exponential_base", 2.0)
+
+        # Throttle configuration
+        throttle_config = config.get("throttle", {})
+        self.throttle_enabled = throttle_config.get("enabled", False)
+        self.min_request_interval = throttle_config.get("min_request_interval", 0.5)
+        self.last_request_time = 0.0
+
+        # Get API key
+        api_key_env = config.get("api_key_env", "AZURE_ANTHROPIC_API_KEY")
+        self.api_key = os.getenv(api_key_env)
+
+        if not self.api_key:
+            raise ValueError(f"API key not found in environment variable: {api_key_env}")
+
+        # Initialize Anthropic client with Azure base_url
+        try:
+            from anthropic import AsyncAnthropic
+
+            self.client = AsyncAnthropic(
+                api_key=self.api_key,
+                base_url=self.endpoint,
+            )
+        except ImportError as e:
+            raise ImportError(
+                "anthropic package not installed. Install with: pip install anthropic"
+            ) from e
+
+        logger.info("Initialized Azure Anthropic provider")
+        logger.info(f"  Endpoint: {self.endpoint}")
+        logger.info(f"  Deployment: {self.deployment_name}")
+
+
 class LLMClient:
     """Main LLM client that routes to appropriate provider."""
 
@@ -326,13 +402,16 @@ class LLMClient:
         if provider_name == "anthropic":
             provider_config = config.get("anthropic", {})
             self.provider: LLMProvider = AnthropicProvider(provider_config)
+        elif provider_name == "azure_anthropic":
+            provider_config = config.get("azure_anthropic", {})
+            self.provider = AzureAnthropicProvider(provider_config)
         else:
             raise ValueError(f"Unsupported LLM provider: {provider_name}")
 
         logger.info(f"Initialized LLM client with provider: {provider_name}")
 
     async def chat(
-        self, messages: list[dict], tools: Optional[list[dict]] = None
+        self, messages: list[dict], tools: list[dict] | None = None
     ) -> LLMResponse:
         """
         Send chat request to LLM provider.
@@ -347,7 +426,7 @@ class LLMClient:
         return await self.provider.chat(messages, tools)
 
     async def chat_stream(
-        self, messages: list[dict], tools: Optional[list[dict]] = None
+        self, messages: list[dict], tools: list[dict] | None = None
     ):
         """
         Stream chat response from LLM provider.
