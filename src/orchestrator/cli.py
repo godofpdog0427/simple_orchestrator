@@ -2,9 +2,9 @@
 
 import asyncio
 import os
+import signal
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from dotenv import load_dotenv
@@ -14,13 +14,21 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
 
+from orchestrator.core.interrupt import (
+    InterruptController,
+    InterruptReason,
+    InterruptType,
+    clear_interrupt_controller,
+    set_interrupt_controller,
+)
+
 # Load environment variables from .env file
 load_dotenv()
 
 console = Console()
 
 
-def _load_config(config_path: Optional[Path]) -> dict:
+def _load_config(config_path: Path | None) -> dict:
     """Load configuration from file or use default."""
     import yaml
 
@@ -52,23 +60,52 @@ async def _run_orchestrator(config: dict) -> None:
 
 async def _run_interactive(config: dict) -> None:
     """Run orchestrator in interactive chat mode."""
-    from orchestrator.core.orchestrator import Orchestrator
-    from orchestrator.display_stream import StreamingDisplayManager
-    from orchestrator.display import set_display_manager
     from orchestrator.cli.welcome import WelcomeScreen
+    from orchestrator.core.orchestrator import Orchestrator
+    from orchestrator.display import set_display_manager
+    from orchestrator.display_stream import StreamingDisplayManager
     from orchestrator.modes.models import ExecutionMode
 
     # Check if streaming display is enabled (default: true)
-    use_streaming = config.get("cli", {}).get("use_streaming_display", True)
+    cli_config = config.get("cli", {})
+    use_streaming = cli_config.get("use_streaming_display", True)
 
     # Initialize display manager
     if use_streaming:
-        display = StreamingDisplayManager()
+        # Get activity indicator settings (Phase 7B)
+        activity_config = cli_config.get("activity_indicator", {})
+        display = StreamingDisplayManager(
+            activity_enabled=activity_config.get("enabled", True),
+            spinner_style=activity_config.get("spinner_style", "dots"),
+            spinner_color=activity_config.get("color", "cyan"),
+        )
         set_display_manager(display)
     # else: display manager will be initialized in orchestrator.initialize()
 
     orchestrator = Orchestrator(config)
     await orchestrator.initialize()
+
+    # Phase 7: Initialize interrupt controller
+    interrupt_config = config.get("interrupt", {})
+    soft_limit = interrupt_config.get("soft_interrupt_limit", 2)
+    interrupt_controller = InterruptController(soft_interrupt_limit=soft_limit)
+    set_interrupt_controller(interrupt_controller)
+    orchestrator.interrupt_controller = interrupt_controller
+
+    # Setup signal handler for SIGINT (Ctrl+C)
+    original_sigint_handler = signal.getsignal(signal.SIGINT)
+
+    def sigint_handler(_signum, _frame):
+        """Handle Ctrl+C during execution."""
+        # Use synchronous version since we're in signal handler
+        interrupt_controller.request_interrupt_sync(
+            interrupt_type=InterruptType.SOFT,
+            reason=InterruptReason.USER_REQUEST,
+            message="User pressed Ctrl+C",
+        )
+        console.print("\n[yellow]⚠️  Interrupt requested, finishing current operation...[/yellow]")
+
+    signal.signal(signal.SIGINT, sigint_handler)
 
     # NEW (Phase 6E): Create welcome screen builder
     welcome = WelcomeScreen(console)
@@ -110,6 +147,9 @@ async def _run_interactive(config: dict) -> None:
     try:
         while True:
             try:
+                # Phase 7: Reset interrupt state before each input cycle
+                await interrupt_controller.reset()
+
                 # Get user input with colored mode indicator (Phase 6A+)
                 if orchestrator.mode_manager:
                     mode = orchestrator.mode_manager.current_mode
@@ -247,12 +287,20 @@ async def _run_interactive(config: dict) -> None:
                         console.print("[yellow]Continuing in PLAN mode...[/yellow]")
 
             except KeyboardInterrupt:
-                console.print("\n[yellow]Use Ctrl+D to exit[/yellow]")
+                # KeyboardInterrupt during prompt (not during execution)
+                if interrupt_controller.is_interrupted:
+                    # Already interrupted during execution, user is trying to force exit
+                    console.print("\n[red]Force exit requested[/red]")
+                    break
+                console.print("\n[yellow]Press Ctrl+C again to exit, or use Ctrl+D[/yellow]")
                 continue
             except EOFError:
                 break
 
     finally:
+        # Restore original signal handler
+        signal.signal(signal.SIGINT, original_sigint_handler)
+        clear_interrupt_controller()
         await orchestrator.shutdown()
 
 
@@ -264,7 +312,7 @@ async def _run_interactive(config: dict) -> None:
     help="Path to configuration file",
 )
 @click.pass_context
-def cli(ctx: click.Context, config: Optional[Path]) -> None:
+def cli(ctx: click.Context, config: Path | None) -> None:
     """Simple Orchestrator - A lightweight CLI Agent Orchestrator."""
     ctx.ensure_object(dict)
     ctx.obj["config"] = config
@@ -296,7 +344,7 @@ def start(ctx: click.Context) -> None:
     help="Execution mode (ask/plan/execute)",
 )
 @click.pass_context
-def chat(ctx: click.Context, mode: Optional[str]) -> None:
+def chat(ctx: click.Context, mode: str | None) -> None:
     """Start orchestrator in interactive chat mode."""
     config_path = ctx.obj.get("config")
     config = _load_config(config_path)
@@ -513,6 +561,7 @@ def skill_show(ctx: click.Context, skill_name: str) -> None:
 def skill_create(ctx: click.Context, name: str, description: str, tools: tuple[str, ...], tags: tuple[str, ...]) -> None:
     """Create a new skill skeleton in user_extensions/skills/."""
     from pathlib import Path
+
     from orchestrator.skills.models import create_skill_template
 
     config = ctx.obj.get("loaded_config", {})
@@ -542,7 +591,7 @@ def skill_create(ctx: click.Context, name: str, description: str, tools: tuple[s
     skill_file.write_text(template, encoding="utf-8")
 
     console.print(f"[green]✓[/green] Created skill: {skill_file}")
-    console.print(f"\nEdit the file to customize the skill instructions:")
+    console.print("\nEdit the file to customize the skill instructions:")
     console.print(f"  {skill_file}")
 
 
@@ -614,8 +663,9 @@ def workspace(ctx: click.Context) -> None:
 def workspace_list(ctx: click.Context) -> None:
     """List all workspaces."""
     from datetime import datetime
-    from pathlib import Path
+
     from rich.table import Table
+
     from orchestrator.workspace.state import WorkspaceManager
 
     config = ctx.obj.get("loaded_config", {})
@@ -689,8 +739,8 @@ def workspace_delete(ctx: click.Context, session_id: str) -> None:
 @click.pass_context
 def workspace_purge(ctx: click.Context, older_than: int) -> None:
     """Purge old workspaces."""
-    from orchestrator.workspace.state import WorkspaceManager
     from orchestrator.workspace.lifecycle import WorkspaceLifecycleManager
+    from orchestrator.workspace.state import WorkspaceManager
 
     config = ctx.obj.get("loaded_config", {})
     workspace_config = config.get("workspace", {})
@@ -726,7 +776,9 @@ def approval(ctx: click.Context) -> None:
 def approval_list(ctx: click.Context) -> None:
     """List whitelisted tools for current workspace."""
     import uuid
+
     from rich.table import Table
+
     from orchestrator.workspace.state import WorkspaceManager
 
     config = ctx.obj.get("loaded_config", {})
@@ -771,6 +823,7 @@ def approval_list(ctx: click.Context) -> None:
 def approval_clear(ctx: click.Context, tool: str | None) -> None:
     """Clear approval whitelist."""
     import uuid
+
     from orchestrator.workspace.state import WorkspaceManager
 
     config = ctx.obj.get("loaded_config", {})

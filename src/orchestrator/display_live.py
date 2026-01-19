@@ -339,3 +339,39 @@ class LiveDisplayManager:
             lines.append(f"  {key}: {value_str}")
 
         return "\n".join(lines)
+
+    # Phase 7: Interrupt status display methods
+
+    def show_interrupt_status(self, message: str = "Interrupt requested...") -> None:
+        """
+        Display interrupt status to user.
+
+        Args:
+            message: Status message to display
+        """
+        if not self._enabled:
+            return
+
+        # If live display is active, update the tool status zone
+        if self._is_live_active:
+            self._tool_status = f"[bold yellow]⚠️  {message}[/bold yellow]"
+            self._update_layout()
+        else:
+            self.console.print(f"\n[bold yellow]⚠️  {message}[/bold yellow]")
+
+    def show_interrupt_complete(self, message: str = "Execution stopped") -> None:
+        """
+        Display interrupt completion status.
+
+        Args:
+            message: Completion message
+        """
+        if not self._enabled:
+            return
+
+        # Stop live display first if active
+        if self._is_live_active:
+            self.stop_live()
+
+        self.console.print(f"\n[bold green]✓ {message}[/bold green]")
+        self.console.print("[dim]Ready for next command[/dim]\n")
