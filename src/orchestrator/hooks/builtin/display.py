@@ -195,10 +195,8 @@ class DisplayHook(Hook):
 
         if self.is_streaming_display:
             self.display.append_tool_execution(tool_name, tool_input)
-            # Phase 7B: Start activity indicator after showing tool header
-            # This provides visual feedback during HITL approval wait
-            if hasattr(self.display, 'start_activity'):
-                self.display.start_activity(f"Preparing {tool_name}...")
+            # Note: Activity indicator (spinner) is managed by orchestrator._execute_tool()
+            # via show_tool_activity() context manager. No need to start it here.
         else:
             self.display.show_tool_execution(tool_name, tool_input)
 
