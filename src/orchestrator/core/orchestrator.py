@@ -1328,6 +1328,8 @@ If you need more information from the user, ask clearly and specifically."""
 
         # Trigger HITL approval if needed
         if requires_approval:
+            # Phase 7B: Activity indicator is started by DisplayHook in tool.before_execute
+            # HITLHook will stop it before showing the prompt
             approval_result = await self._trigger_hook(
                 "tool.requires_approval",
                 {"tool_name": tool_name, "tool_input": tool_args, "requires_approval": True},

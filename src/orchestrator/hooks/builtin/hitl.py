@@ -73,7 +73,9 @@ class HITLHook(Hook):
 
         # Prompt user for approval (with "always" option)
         try:
-            approval_type = await self._prompt_user_enhanced(tool_name, tool_input)
+            approval_type = await self._prompt_user_enhanced(
+                tool_name, tool_input, context.orchestrator_state
+            )
 
             if approval_type in ["yes", "always"]:
                 # Add to whitelist if "always"
@@ -188,7 +190,8 @@ class HITLHook(Hook):
     async def _prompt_user_enhanced(
         self,
         tool_name: str,
-        tool_input: dict[str, Any]
+        tool_input: dict[str, Any],
+        orchestrator_state: Optional[Any] = None,
     ) -> str:
         """
         Prompt user for approval with 'always' option (Phase 6D).
@@ -196,6 +199,7 @@ class HITLHook(Hook):
         Args:
             tool_name: Name of the tool
             tool_input: Tool input parameters
+            orchestrator_state: Optional orchestrator reference (for display control)
 
         Returns:
             str: "yes", "no", or "always"
@@ -203,6 +207,12 @@ class HITLHook(Hook):
         Raises:
             asyncio.TimeoutError: If prompt times out
         """
+        # Phase 7B: Stop activity indicator before showing prompt
+        if orchestrator_state and hasattr(orchestrator_state, 'display_manager'):
+            display = orchestrator_state.display_manager
+            if hasattr(display, 'stop_activity'):
+                display.stop_activity()
+
         # Format prompt with three options
         input_str = self._format_input_brief(tool_input)
         prompt_text = (
