@@ -345,15 +345,96 @@ def start(ctx: click.Context) -> None:
     type=click.Choice(["ask", "plan", "execute"], case_sensitive=False),
     help="Execution mode (ask/plan/execute)",
 )
+@click.option(
+    "--session",
+    "-s",
+    "session_id",
+    type=str,
+    help="Resume specific session by ID or name",
+)
+@click.option(
+    "--resume",
+    "-r",
+    is_flag=True,
+    help="Resume most recent session",
+)
+@click.option(
+    "--new",
+    "-n",
+    "new_session",
+    is_flag=True,
+    help="Create new session (prompts for name)",
+)
+@click.option(
+    "--name",
+    type=str,
+    help="Name for new session (use with --new)",
+)
 @click.pass_context
-def chat(ctx: click.Context, mode: str | None) -> None:
-    """Start orchestrator in interactive chat mode."""
+def chat(
+    ctx: click.Context,
+    mode: str | None,
+    session_id: str | None,
+    resume: bool,
+    new_session: bool,
+    name: str | None,
+) -> None:
+    """Start orchestrator in interactive chat mode.
+
+    Session options:
+      --session/-s ID   Resume specific session by ID or name
+      --resume/-r       Resume most recent session
+      --new/-n          Create new session (prompts for name)
+      --name NAME       Name for new session (use with --new)
+
+    Examples:
+      orchestrator chat                    # Creates new session with auto-generated name
+      orchestrator chat --resume           # Resume most recent session
+      orchestrator chat -s abc123          # Resume session by ID
+      orchestrator chat -s "My Project"    # Resume session by name
+      orchestrator chat --new --name "API Dev"  # Create named session
+    """
     config_path = ctx.obj.get("config")
     config = _load_config(config_path)
 
     # Override config mode if specified via CLI
     if mode:
         config["mode"] = mode.lower()
+
+    # Phase 8: Session options
+    if session_id:
+        # Check if it's a name or ID
+        from orchestrator.workspace.session import SessionRegistry
+        workspace_config = config.get("workspace", {})
+        registry_file = workspace_config.get("session_registry", ".orchestrator/sessions.json")
+        registry = SessionRegistry(registry_file)
+
+        # Try to find by name first
+        session = registry.get_session_by_name(session_id)
+        if session:
+            config["session_id"] = session.id
+            console.print(f"[green]Resuming session:[/green] {session.name}")
+        elif registry.session_exists(session_id):
+            config["session_id"] = session_id
+            session = registry.get_session(session_id)
+            if session:
+                console.print(f"[green]Resuming session:[/green] {session.name}")
+        else:
+            console.print(f"[red]Session not found:[/red] {session_id}")
+            console.print("[yellow]Use 'orchestrator session list' to see available sessions[/yellow]")
+            return
+
+    elif resume:
+        config["resume_session"] = True
+
+    elif new_session:
+        if name:
+            config["session_name"] = name
+        else:
+            # Prompt for name
+            session_name = click.prompt("Session name", default="")
+            if session_name:
+                config["session_name"] = session_name
 
     try:
         asyncio.run(_run_interactive(config))
@@ -449,6 +530,186 @@ def tool_info(tool_name: str) -> None:
     """Show information about a tool."""
     console.print(f"Tool info for: {tool_name}")
     console.print("[yellow]Not implemented yet[/yellow]")
+
+
+# Phase 8: Session management commands
+@cli.group()
+@click.pass_context
+def session(ctx: click.Context) -> None:
+    """Session management commands (Phase 8)."""
+    config_path = ctx.obj.get("config")
+    ctx.obj["loaded_config"] = _load_config(config_path)
+
+
+@session.command("list")
+@click.option("--limit", "-n", default=20, help="Maximum number of sessions to show")
+@click.pass_context
+def session_list(ctx: click.Context, limit: int) -> None:
+    """List all sessions sorted by last accessed time."""
+    from datetime import datetime
+    from rich.table import Table
+    from orchestrator.workspace.session import SessionRegistry
+
+    config = ctx.obj.get("loaded_config", {})
+    workspace_config = config.get("workspace", {})
+    registry_file = workspace_config.get("session_registry", ".orchestrator/sessions.json")
+
+    registry = SessionRegistry(registry_file)
+    sessions = registry.list_sessions(limit=limit)
+
+    if not sessions:
+        console.print("[yellow]No sessions found[/yellow]")
+        console.print("[dim]Start a new session with: orchestrator chat[/dim]")
+        return
+
+    # Display table
+    table = Table(title="📋 Sessions", show_header=True, header_style="bold magenta")
+    table.add_column("ID", style="dim", width=12)
+    table.add_column("Name", style="cyan", width=30)
+    table.add_column("Last Accessed", style="green", width=18)
+    table.add_column("Messages", style="yellow", width=10)
+    table.add_column("Tasks", style="blue", width=8)
+
+    now = datetime.now()
+    for sess in sessions:
+        # Format time ago
+        delta = now - sess.last_accessed
+        if delta.days > 0:
+            time_ago = f"{delta.days}d ago"
+        elif delta.seconds >= 3600:
+            time_ago = f"{delta.seconds // 3600}h ago"
+        elif delta.seconds >= 60:
+            time_ago = f"{delta.seconds // 60}m ago"
+        else:
+            time_ago = "just now"
+
+        table.add_row(
+            sess.id[:8] + "...",
+            sess.name[:28] + ".." if len(sess.name) > 30 else sess.name,
+            time_ago,
+            str(sess.message_count),
+            str(sess.task_count),
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]Total: {registry.count} session(s)[/dim]")
+    console.print("[dim]Use 'orchestrator chat -s <ID or name>' to resume a session[/dim]")
+
+
+@session.command("show")
+@click.argument("session_id")
+@click.pass_context
+def session_show(ctx: click.Context, session_id: str) -> None:
+    """Show detailed information about a session."""
+    from orchestrator.workspace.session import SessionRegistry
+    from orchestrator.workspace.state import WorkspaceManager
+
+    config = ctx.obj.get("loaded_config", {})
+    workspace_config = config.get("workspace", {})
+    registry_file = workspace_config.get("session_registry", ".orchestrator/sessions.json")
+    workspace_dir = workspace_config.get("workspace_dir", ".orchestrator/workspace_state")
+
+    registry = SessionRegistry(registry_file)
+    workspace_manager = WorkspaceManager(workspace_dir)
+
+    # Find session by name or ID
+    sess = registry.get_session_by_name(session_id)
+    if not sess:
+        sess = registry.get_session(session_id)
+
+    if not sess:
+        console.print(f"[red]Session not found:[/red] {session_id}")
+        return
+
+    # Get fresh stats from workspace
+    stats = workspace_manager.get_stats(sess.id)
+    if stats:
+        msg_count, task_count = stats
+    else:
+        msg_count, task_count = sess.message_count, sess.task_count
+
+    console.print(Panel(
+        f"[bold cyan]Name:[/bold cyan] {sess.name}\n"
+        f"[bold cyan]ID:[/bold cyan] {sess.id}\n"
+        f"[bold cyan]Description:[/bold cyan] {sess.description or '(none)'}\n"
+        f"[bold cyan]Created:[/bold cyan] {sess.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"[bold cyan]Last Accessed:[/bold cyan] {sess.last_accessed.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"[bold cyan]Messages:[/bold cyan] {msg_count}\n"
+        f"[bold cyan]Task Summaries:[/bold cyan] {task_count}",
+        title="📄 Session Details",
+        border_style="cyan",
+    ))
+
+
+@session.command("delete")
+@click.argument("session_id")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def session_delete(ctx: click.Context, session_id: str, force: bool) -> None:
+    """Delete a session and its workspace."""
+    from orchestrator.workspace.session import SessionRegistry
+    from orchestrator.workspace.state import WorkspaceManager
+
+    config = ctx.obj.get("loaded_config", {})
+    workspace_config = config.get("workspace", {})
+    registry_file = workspace_config.get("session_registry", ".orchestrator/sessions.json")
+    workspace_dir = workspace_config.get("workspace_dir", ".orchestrator/workspace_state")
+
+    registry = SessionRegistry(registry_file)
+    workspace_manager = WorkspaceManager(workspace_dir)
+
+    # Find session by name or ID
+    sess = registry.get_session_by_name(session_id)
+    if not sess:
+        sess = registry.get_session(session_id)
+
+    if not sess:
+        console.print(f"[red]Session not found:[/red] {session_id}")
+        return
+
+    # Confirm deletion
+    if not force:
+        if not Confirm.ask(f"Delete session '{sess.name}'? This cannot be undone"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+    # Delete workspace file first
+    workspace_manager.delete(sess.id)
+
+    # Delete from registry
+    registry.delete_session(sess.id)
+
+    console.print(f"[green]✓ Deleted session:[/green] {sess.name}")
+
+
+@session.command("rename")
+@click.argument("session_id")
+@click.argument("new_name")
+@click.pass_context
+def session_rename(ctx: click.Context, session_id: str, new_name: str) -> None:
+    """Rename a session."""
+    from orchestrator.workspace.session import SessionRegistry
+
+    config = ctx.obj.get("loaded_config", {})
+    workspace_config = config.get("workspace", {})
+    registry_file = workspace_config.get("session_registry", ".orchestrator/sessions.json")
+
+    registry = SessionRegistry(registry_file)
+
+    # Find session by name or ID
+    sess = registry.get_session_by_name(session_id)
+    if not sess:
+        sess = registry.get_session(session_id)
+
+    if not sess:
+        console.print(f"[red]Session not found:[/red] {session_id}")
+        return
+
+    old_name = sess.name
+    if registry.rename_session(sess.id, new_name):
+        console.print(f"[green]✓ Renamed session:[/green] '{old_name}' → '{new_name}'")
+    else:
+        console.print("[red]Failed to rename session[/red]")
 
 
 @cli.group()

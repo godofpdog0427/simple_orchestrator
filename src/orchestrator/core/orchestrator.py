@@ -268,23 +268,39 @@ class Orchestrator:
             self.tool_registry.register(subagent_tool)
 
         # Initialize workspace manager and state (Phase 5B)
+        # Phase 8: Session Registry integration
         workspace_config = self.config.get("workspace", {})
         if workspace_config.get("enabled", True):
-            import uuid
             from orchestrator.workspace.state import WorkspaceManager
+            from orchestrator.workspace.session import SessionRegistry
             from orchestrator.workspace.summarizer import TaskSummarizer
 
-            workspace_dir = workspace_config.get("workspace_dir", ".orchestrator/workspace")
+            workspace_dir = workspace_config.get("workspace_dir", ".orchestrator/workspace_state")
+            registry_file = workspace_config.get("session_registry", ".orchestrator/sessions.json")
+
             self.workspace_manager = WorkspaceManager(workspace_dir)
+            self.session_registry = SessionRegistry(registry_file)
+
+            # Determine session_id based on config options (Phase 8)
+            session_id = self._resolve_session_id()
 
             # Load or create workspace for this session
-            session_id = self.config.get("session_id") or str(uuid.uuid4())
             self.workspace = self.workspace_manager.load_or_create(session_id)
+            self.current_session = self.session_registry.get_session(session_id)
 
             # Initialize task summarizer
             self.summarizer = TaskSummarizer(self.llm_client)
 
+            # Update session stats
+            self.session_registry.update_session_stats(
+                session_id,
+                message_count=len(self.workspace.workspace_conversation),
+                task_count=len(self.workspace.task_summaries),
+            )
+
             logger.info(f"Loaded workspace: {session_id}")
+            if self.current_session:
+                logger.info(f"Session: {self.current_session.name}")
             logger.info(f"Workspace has {len(self.workspace.task_summaries)} task summaries")
 
             # NEW (Phase 6D): Inject workspace into HITLHook for approval whitelist
@@ -306,6 +322,14 @@ class Orchestrator:
         if self.workspace_manager and self.workspace:
             self.workspace_manager.save(self.workspace)
             logger.info(f"Workspace saved: {self.workspace.session_id}")
+
+            # Phase 8: Update session stats
+            if hasattr(self, 'session_registry') and self.session_registry:
+                self.session_registry.update_session_stats(
+                    self.workspace.session_id,
+                    message_count=len(self.workspace.workspace_conversation),
+                    task_count=len(self.workspace.task_summaries),
+                )
 
         # Shutdown subagent manager (Phase 4B)
         if self.subagent_manager:
@@ -340,6 +364,60 @@ class Orchestrator:
                 if isinstance(hook, HITLHook):
                     hook.workspace = self.workspace
                     logger.debug("Injected workspace into HITLHook for approval whitelist")
+
+    def _resolve_session_id(self) -> str:
+        """
+        Resolve session_id based on config options (Phase 8).
+
+        Priority:
+        1. Explicit session_id in config
+        2. resume_session=True -> most recent session
+        3. new_session=True -> create new session with auto-generated name
+        4. Default: create new session (backward compatible)
+
+        Returns:
+            Session UUID
+        """
+        from datetime import datetime
+
+        # 1. Explicit session_id provided
+        session_id = self.config.get("session_id")
+        if session_id:
+            # Ensure it's registered (for backward compatibility with existing workspaces)
+            if not self.session_registry.session_exists(session_id):
+                # Check if workspace file exists (migrating from pre-Phase 8)
+                if self.workspace_manager.exists(session_id):
+                    # Auto-register existing workspace
+                    stats = self.workspace_manager.get_stats(session_id)
+                    self.session_registry.create_session(
+                        name=f"Migrated Session",
+                        description="Auto-migrated from existing workspace",
+                        session_id=session_id,
+                    )
+                    if stats:
+                        self.session_registry.update_session_stats(session_id, *stats)
+            return session_id
+
+        # 2. Resume most recent session
+        resume_session = self.config.get("resume_session", False)
+        if resume_session:
+            sessions = self.session_registry.list_sessions(limit=1)
+            if sessions:
+                logger.info(f"Resuming session: {sessions[0].name}")
+                return sessions[0].id
+
+        # 3. Create new session
+        session_name = self.config.get("session_name")
+        if not session_name:
+            # Auto-generate name with timestamp
+            session_name = f"Session {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+        session_description = self.config.get("session_description", "")
+        session = self.session_registry.create_session(
+            name=session_name,
+            description=session_description,
+        )
+        return session.id
 
     def _create_orchestrator_instance(self, config: dict) -> "Orchestrator":
         """

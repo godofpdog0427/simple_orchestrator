@@ -181,3 +181,68 @@ class WorkspaceManager:
             task_summaries=summaries,
             user_preferences=data.get("user_preferences", {}),
         )
+
+    def delete(self, session_id: str) -> bool:
+        """
+        Delete workspace file for session.
+
+        Args:
+            session_id: Session UUID
+
+        Returns:
+            True if deleted, False if not found
+        """
+        workspace_file = self.workspace_dir / f"{session_id}.json"
+        if workspace_file.exists():
+            workspace_file.unlink()
+            logger.info(f"Deleted workspace file: {session_id}")
+            return True
+        return False
+
+    def exists(self, session_id: str) -> bool:
+        """
+        Check if workspace file exists.
+
+        Args:
+            session_id: Session UUID
+
+        Returns:
+            True if exists
+        """
+        workspace_file = self.workspace_dir / f"{session_id}.json"
+        return workspace_file.exists()
+
+    def get_stats(self, session_id: str) -> tuple[int, int] | None:
+        """
+        Get workspace statistics without loading full state.
+
+        Args:
+            session_id: Session UUID
+
+        Returns:
+            Tuple of (message_count, task_count) or None if not found
+        """
+        workspace_file = self.workspace_dir / f"{session_id}.json"
+        if not workspace_file.exists():
+            return None
+
+        try:
+            with open(workspace_file) as f:
+                data = json.load(f)
+            message_count = len(data.get("workspace_conversation", []))
+            task_count = len(data.get("task_summaries", []))
+            return (message_count, task_count)
+        except Exception as e:
+            logger.warning(f"Failed to get workspace stats: {e}")
+            return None
+
+    def list_workspaces(self) -> list[str]:
+        """
+        List all workspace session IDs.
+
+        Returns:
+            List of session UUIDs
+        """
+        return [
+            f.stem for f in self.workspace_dir.glob("*.json")
+        ]

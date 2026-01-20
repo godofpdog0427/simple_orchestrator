@@ -133,9 +133,11 @@ cache:
   llm_responses: false  # Cache LLM responses (disabled by default for safety)
 
 # Workspace Settings (Phase 5B)
+# Phase 8: Session Memory
 workspace:
   enabled: true  # Enable workspace persistence
   workspace_dir: ".orchestrator/workspace_state"  # Directory for workspace state files (separate from working directory)
+  session_registry: ".orchestrator/sessions.json"  # Session metadata registry (Phase 8)
 
   # Task summaries
   max_task_summaries: 10  # Keep last N task summaries in rolling window
