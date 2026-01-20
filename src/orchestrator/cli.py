@@ -72,12 +72,14 @@ async def _run_interactive(config: dict) -> None:
 
     # Initialize display manager
     if use_streaming:
-        # Get activity indicator settings (Phase 7B)
+        # Get activity indicator settings (Phase 7B/7C)
         activity_config = cli_config.get("activity_indicator", {})
         display = StreamingDisplayManager(
             activity_enabled=activity_config.get("enabled", True),
             spinner_style=activity_config.get("spinner_style", "dots"),
             spinner_color=activity_config.get("color", "cyan"),
+            warning_delay=activity_config.get("warning_delay", 10.0),
+            warning_interval=activity_config.get("warning_interval", 15.0),
         )
         set_display_manager(display)
     # else: display manager will be initialized in orchestrator.initialize()

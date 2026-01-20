@@ -1,6 +1,8 @@
 """Core orchestrator implementation."""
 
+import asyncio
 import logging
+import sys
 from datetime import datetime
 from typing import Any, Optional, TYPE_CHECKING
 
@@ -185,12 +187,14 @@ class Orchestrator:
             logger.info(f"Using existing display manager: {type(self.display_manager).__name__}")
         elif use_streaming:
             from orchestrator.display_stream import StreamingDisplayManager
-            # Get activity indicator settings (Phase 7B)
+            # Get activity indicator settings (Phase 7B/7C)
             activity_config = cli_config.get("activity_indicator", {})
             self.display_manager = StreamingDisplayManager(
                 activity_enabled=activity_config.get("enabled", True),
                 spinner_style=activity_config.get("spinner_style", "dots"),
                 spinner_color=activity_config.get("color", "cyan"),
+                warning_delay=activity_config.get("warning_delay", 10.0),
+                warning_interval=activity_config.get("warning_interval", 15.0),
             )
             set_display_manager(self.display_manager)
             logger.info("Created StreamingDisplayManager")
@@ -1046,34 +1050,88 @@ class Orchestrator:
 
                     # Consume stream - yields StreamChunk objects, then final LLMResponse
                     # Phase 7: Check interrupt between chunks for responsiveness
-                    async for item in stream_generator:
-                        # === INTERRUPT CHECK POINT 2: During streaming ===
-                        if self._check_interrupt():
-                            logger.info("Interrupt during streaming")
-                            # Stop activity indicator if still running
-                            if not first_token_received and hasattr(self.display_manager, 'stop_activity'):
-                                self.display_manager.stop_activity()
-                            await self._handle_interrupt(task, partial_result=reasoning_text if reasoning_text else None)
-                            return f"[Execution interrupted]\n\nPartial response:\n{reasoning_text}" if reasoning_text else "[Execution interrupted by user]"
+                    # Phase 7C: Track streaming progress and show warning if stalled
+                    activity_config = cli_config.get("activity_indicator", {})
+                    stream_warning_delay = activity_config.get("warning_delay", 10.0)
+                    stream_warning_interval = activity_config.get("warning_interval", 15.0)
 
-                        if isinstance(item, StreamChunk):
-                            # Phase 7B: On first token, stop spinner and show thinking header
-                            if not first_token_received:
-                                first_token_received = True
-                                # Stop the "Thinking..." spinner
-                                if hasattr(self.display_manager, 'stop_activity'):
+                    # Phase 7C: Background task to show warnings during streaming stalls
+                    # Since async for blocks waiting for next chunk, we need a concurrent task
+                    streaming_start_time = asyncio.get_event_loop().time()
+                    last_chunk_time = streaming_start_time
+                    warning_task_stop = asyncio.Event()
+
+                    async def _streaming_warning_task():
+                        """Background task to show warnings if streaming stalls."""
+                        nonlocal last_chunk_time
+                        last_warning_time = 0.0
+
+                        # Wait for first token before starting warning checks
+                        while not first_token_received and not warning_task_stop.is_set():
+                            await asyncio.sleep(0.5)
+
+                        while not warning_task_stop.is_set():
+                            await asyncio.sleep(1.0)  # Check every second
+
+                            if warning_task_stop.is_set():
+                                break
+
+                            current_time = asyncio.get_event_loop().time()
+                            time_since_chunk = current_time - last_chunk_time
+                            time_since_warning = current_time - last_warning_time if last_warning_time > 0 else float('inf')
+
+                            # Show warning if stalled longer than warning_delay
+                            if time_since_chunk >= stream_warning_delay:
+                                # Only show warning at intervals
+                                if time_since_warning >= stream_warning_interval or last_warning_time == 0:
+                                    elapsed = int(time_since_chunk)
+                                    sys.stdout.write(f"\n\033[33m⏳ Still waiting for response... ({elapsed}s)\033[0m\n")
+                                    sys.stdout.flush()
+                                    last_warning_time = current_time
+
+                    # Start warning task
+                    warning_task = asyncio.create_task(_streaming_warning_task())
+
+                    try:
+                        async for item in stream_generator:
+                            # Update last chunk time for warning task
+                            last_chunk_time = asyncio.get_event_loop().time()
+
+                            # === INTERRUPT CHECK POINT 2: During streaming ===
+                            if self._check_interrupt():
+                                logger.info("Interrupt during streaming")
+                                # Stop activity indicator if still running
+                                if not first_token_received and hasattr(self.display_manager, 'stop_activity'):
                                     self.display_manager.stop_activity()
-                                # Show "● Thinking" header and prepare for streaming
-                                if hasattr(self.display_manager, 'start_thinking_stream'):
-                                    self.display_manager.start_thinking_stream()
+                                await self._handle_interrupt(task, partial_result=reasoning_text if reasoning_text else None)
+                                return f"[Execution interrupted]\n\nPartial response:\n{reasoning_text}" if reasoning_text else "[Execution interrupted by user]"
 
-                            # Text chunk - add to display
-                            reasoning_text += item.text
-                            if hasattr(self.display_manager, 'update_thinking_stream'):
-                                self.display_manager.update_thinking_stream(item.text)
-                        elif isinstance(item, LLMResp):
-                            # Final response
-                            response = item
+                            if isinstance(item, StreamChunk):
+                                # Phase 7B: On first token, stop spinner and show thinking header
+                                if not first_token_received:
+                                    first_token_received = True
+                                    # Stop the "Thinking..." spinner
+                                    if hasattr(self.display_manager, 'stop_activity'):
+                                        self.display_manager.stop_activity()
+                                    # Show "● Thinking" header and prepare for streaming
+                                    if hasattr(self.display_manager, 'start_thinking_stream'):
+                                        self.display_manager.start_thinking_stream()
+
+                                # Text chunk - add to display
+                                reasoning_text += item.text
+                                if hasattr(self.display_manager, 'update_thinking_stream'):
+                                    self.display_manager.update_thinking_stream(item.text)
+                            elif isinstance(item, LLMResp):
+                                # Final response
+                                response = item
+                    finally:
+                        # Stop warning task when streaming completes
+                        warning_task_stop.set()
+                        warning_task.cancel()
+                        try:
+                            await warning_task
+                        except asyncio.CancelledError:
+                            pass
 
                     # End thinking stream (add newline for streaming display)
                     if first_token_received and hasattr(self.display_manager, 'end_thinking_stream'):
@@ -1160,7 +1218,15 @@ class Orchestrator:
                     conversation_history.append({"role": "user", "content": tool_results})
 
                 elif response.stop_reason == "max_tokens":
-                    logger.warning("Response hit max_tokens limit")
+                    logger.warning("Response hit max_tokens limit, continuing...")
+                    # Add partial response to history so LLM can continue
+                    if response.content:
+                        conversation_history.append({"role": "assistant", "content": response.content})
+                        # Add a continuation prompt
+                        conversation_history.append({
+                            "role": "user",
+                            "content": "Please continue from where you left off."
+                        })
                     # Continue loop to get more output
 
                 else:

@@ -32,6 +32,8 @@ class StreamingDisplayManager:
         activity_enabled: bool = True,
         spinner_style: str = "dots",
         spinner_color: str = "cyan",
+        warning_delay: float = 10.0,
+        warning_interval: float = 15.0,
     ):
         """
         Initialize minimal streaming display manager.
@@ -41,6 +43,8 @@ class StreamingDisplayManager:
             activity_enabled: Whether to show activity indicators during operations
             spinner_style: Style of spinner animation (dots, line, arc, etc.)
             spinner_color: Color of spinner
+            warning_delay: Seconds before showing "still waiting" message
+            warning_interval: Seconds between subsequent warning updates
         """
         self.console = console or Console()
         self._enabled = True
@@ -53,6 +57,8 @@ class StreamingDisplayManager:
             spinner_name=spinner_style,
             style=spinner_color,
             enabled=activity_enabled,
+            warning_delay=warning_delay,
+            warning_interval=warning_interval,
         )
         self._activity_enabled = activity_enabled
 
