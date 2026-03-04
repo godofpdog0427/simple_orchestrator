@@ -232,7 +232,37 @@ class TaskDecomposeTool(Tool):
             )
 
         # Add dependency
-        await self.task_manager.add_dependency(target_task_id, depends_on_task_id)
+        try:
+            await self.task_manager.add_dependency(target_task_id, depends_on_task_id)
+        except ValueError as e:
+            error_msg = str(e)
+            if "cycle" in error_msg.lower():
+                return ToolResult(
+                    success=False,
+                    error=(
+                        f"Circular dependency detected: adding {target_task_id} -> "
+                        f"{depends_on_task_id} would create a cycle. Use 'get_task_info' "
+                        f"on both tasks to inspect existing dependency chains before "
+                        f"retrying with a different structure."
+                    ),
+                )
+            elif "itself" in error_msg.lower():
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "Self-dependency not allowed: a task cannot depend on itself. "
+                        "Provide a different 'depends_on_task_id'."
+                    ),
+                )
+            return ToolResult(success=False, error=error_msg)
+        except KeyError as e:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"Task not found: {e}. Use 'list_subtasks' or 'get_task_info' "
+                    f"to verify valid task IDs before adding dependencies."
+                ),
+            )
 
         return ToolResult(
             success=True,
@@ -264,7 +294,16 @@ class TaskDecomposeTool(Tool):
             )
 
         # Remove dependency
-        await self.task_manager.remove_dependency(target_task_id, depends_on_task_id)
+        try:
+            await self.task_manager.remove_dependency(target_task_id, depends_on_task_id)
+        except KeyError as e:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"Task not found: {e}. Use 'list_subtasks' or 'get_task_info' "
+                    f"to verify valid task IDs before removing dependencies."
+                ),
+            )
 
         return ToolResult(
             success=True,
