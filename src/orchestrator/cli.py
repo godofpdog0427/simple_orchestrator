@@ -238,6 +238,12 @@ async def _run_interactive(config: dict) -> None:
                 # Process input with orchestrator
                 result = await orchestrator.process_input(user_input)
 
+                # Display error messages that wouldn't otherwise be shown
+                # (in EXECUTE mode, normal output goes through streaming display,
+                # but errors bypass streaming and need explicit printing)
+                if result and result.startswith("Error:"):
+                    console.print(f"\n[bold red]● Task Failed[/bold red]  {result}\n")
+
                 # NEW (Phase 5B): Add assistant response to workspace conversation
                 if orchestrator.workspace and result:
                     orchestrator.workspace.add_assistant_message(result)

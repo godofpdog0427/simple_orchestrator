@@ -177,35 +177,41 @@ class AnthropicProvider(LLMProvider):
             except Exception as e:
                 last_exception = e
 
-                # Check if it's a rate limit error (429)
+                # Check if it's a retryable error
                 is_rate_limit = self._is_rate_limit_error(e)
+                is_connection = self._is_connection_error(e)
 
-                if is_rate_limit and attempt < self.max_retries:
+                if (is_rate_limit or is_connection) and attempt < self.max_retries:
                     # Calculate retry delay with exponential backoff
                     delay = min(
                         self.base_delay * (self.exponential_base**attempt), self.max_delay
                     )
 
-                    # Check for retry-after header
-                    retry_after = self._get_retry_after(e)
-                    if retry_after:
-                        delay = min(retry_after, self.max_delay)
+                    # Check for retry-after header (rate limit only)
+                    if is_rate_limit:
+                        retry_after = self._get_retry_after(e)
+                        if retry_after:
+                            delay = min(retry_after, self.max_delay)
 
+                    error_type = "Rate limit" if is_rate_limit else "Connection"
                     logger.warning(
-                        f"Rate limit error (429) on attempt {attempt + 1}/{self.max_retries + 1}. "
-                        f"Retrying in {delay:.1f}s... "
-                        f"(Tip: Check your usage tier at https://console.anthropic.com/settings/limits)"
+                        f"{error_type} error on attempt {attempt + 1}/{self.max_retries + 1}. "
+                        f"Retrying in {delay:.1f}s..."
                     )
 
                     await asyncio.sleep(delay)
                     continue
 
-                # Not a rate limit error, or out of retries
+                # Not a retryable error, or out of retries
                 if is_rate_limit:
                     logger.error(
                         f"Rate limit error persisted after {self.max_retries} retries. "
                         f"Your API usage tier may be too low. "
                         f"Check https://console.anthropic.com/settings/limits"
+                    )
+                elif is_connection:
+                    logger.error(
+                        f"Connection error persisted after {self.max_retries} retries: {e}"
                     )
                 else:
                     logger.error(f"Error calling Anthropic API: {e}", exc_info=True)
@@ -225,6 +231,18 @@ class AnthropicProvider(LLMProvider):
         # Check error message for 429
         error_str = str(error).lower()
         if "429" in error_str or "rate limit" in error_str or "too many requests" in error_str:
+            return True
+
+        return False
+
+    def _is_connection_error(self, error: Exception) -> bool:
+        """Check if error is a connection or timeout error."""
+        error_type = type(error).__name__
+        if "APIConnectionError" in error_type or "APITimeoutError" in error_type:
+            return True
+
+        error_str = str(error).lower()
+        if "connection" in error_str or "timeout" in error_str:
             return True
 
         return False
@@ -287,26 +305,53 @@ class AnthropicProvider(LLMProvider):
 
         logger.debug(f"Streaming Anthropic API with {len(conversation_messages)} messages")
 
-        # Use stream API
-        async with self.client.messages.stream(**params) as stream:
-            # Stream text chunks
-            async for text in stream.text_stream:
-                yield StreamChunk(text=text)
+        # Retry loop for connection errors (only before any chunks are yielded)
+        last_exception = None
+        for attempt in range(self.max_retries + 1):
+            has_yielded = False
+            try:
+                async with self.client.messages.stream(**params) as stream:
+                    # Stream text chunks
+                    async for text in stream.text_stream:
+                        has_yielded = True
+                        yield StreamChunk(text=text)
 
-            # Get final message
-            final_message = await stream.get_final_message()
+                    # Get final message
+                    final_message = await stream.get_final_message()
 
-            # Yield final response as last item
-            yield LLMResponse(
-                content=final_message.content,
-                stop_reason=final_message.stop_reason,
-                usage={
-                    "input_tokens": final_message.usage.input_tokens,
-                    "output_tokens": final_message.usage.output_tokens,
-                },
-                model=final_message.model,
-                raw_response=final_message,
-            )
+                    # Yield final response as last item
+                    yield LLMResponse(
+                        content=final_message.content,
+                        stop_reason=final_message.stop_reason,
+                        usage={
+                            "input_tokens": final_message.usage.input_tokens,
+                            "output_tokens": final_message.usage.output_tokens,
+                        },
+                        model=final_message.model,
+                        raw_response=final_message,
+                    )
+                    return  # Success
+            except Exception as e:
+                last_exception = e
+                is_connection = self._is_connection_error(e)
+                is_rate_limit = self._is_rate_limit_error(e)
+
+                # Only retry if no chunks have been yielded yet (can't replay partial stream)
+                if not has_yielded and (is_connection or is_rate_limit) and attempt < self.max_retries:
+                    delay = min(
+                        self.base_delay * (self.exponential_base ** attempt), self.max_delay
+                    )
+                    error_type = "Rate limit" if is_rate_limit else "Connection"
+                    logger.warning(
+                        f"{error_type} error on stream attempt {attempt + 1}/{self.max_retries + 1}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                raise
+
+        raise last_exception
 
 
 class AzureAnthropicProvider(AnthropicProvider):
