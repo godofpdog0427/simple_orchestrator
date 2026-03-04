@@ -306,6 +306,12 @@ class Orchestrator:
             # NEW (Phase 6D): Inject workspace into HITLHook for approval whitelist
             self._inject_workspace_to_hitl_hook()
 
+            # Initialize workspace lifecycle manager for compression
+            from orchestrator.workspace.lifecycle import WorkspaceLifecycleManager
+            self._workspace_lifecycle = WorkspaceLifecycleManager(
+                self.workspace_manager, self.summarizer
+            )
+
         logger.info("Orchestrator initialized successfully")
 
     async def shutdown(self) -> None:
@@ -505,11 +511,19 @@ class Orchestrator:
 
             # Dispatch to mode-specific handler
             if current_mode == ExecutionMode.ASK:
-                return await self._process_ask_mode(user_input)
+                result = await self._process_ask_mode(user_input)
             elif current_mode == ExecutionMode.PLAN:
-                return await self._process_plan_mode(user_input)
+                result = await self._process_plan_mode(user_input)
             else:
-                return await self._process_execute_mode(user_input)
+                result = await self._process_execute_mode(user_input)
+
+            # Compress workspace conversation if it has grown too large
+            if self.workspace and hasattr(self, '_workspace_lifecycle'):
+                await self._workspace_lifecycle.compress_workspace(self.workspace)
+                if self.workspace_manager:
+                    self.workspace_manager.save(self.workspace)
+
+            return result
 
         except Exception as e:
             logger.error(f"Error processing input: {e}", exc_info=True)
@@ -1092,6 +1106,12 @@ class Orchestrator:
 
                 logger.debug(f"Reasoning iteration {iteration + 1}/{max_iterations}")
 
+                # Observation Masking: mask old tool results to stay within context window
+                if conversation_history:
+                    conversation_history = self._manage_context_window(
+                        conversation_history, context
+                    )
+
                 # Prepare messages for LLM
                 messages = self._prepare_messages(task, context, conversation_history)
 
@@ -1202,6 +1222,12 @@ class Orchestrator:
                             elif isinstance(item, LLMResp):
                                 # Final response
                                 response = item
+                    except Exception:
+                        # Ensure activity indicator is stopped on error to prevent
+                        # Rich Live from blocking stdout and hanging the CLI
+                        if not first_token_received and hasattr(self.display_manager, 'stop_activity'):
+                            self.display_manager.stop_activity()
+                        raise
                     finally:
                         # Stop warning task when streaming completes
                         warning_task_stop.set()
@@ -1233,7 +1259,8 @@ class Orchestrator:
                             reasoning_text += block.text + "\n"
 
                 # Trigger llm.after_call event with reasoning text
-                token_count = getattr(response, "usage", {}).get("total_tokens", "unknown")
+                usage = getattr(response, "usage", {})
+                token_count = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
                 await self._trigger_hook(
                     "llm.after_call",
                     {"response": response, "token_count": token_count, "reasoning_text": reasoning_text.strip()},
@@ -1315,6 +1342,94 @@ class Orchestrator:
             # Stop live display when reasoning loop ends
             if use_live_display and hasattr(self.display_manager, 'stop_live'):
                 self.display_manager.stop_live()
+
+    def _manage_context_window(
+        self, conversation_history: list[dict], context: dict[str, Any]
+    ) -> list[dict]:
+        """
+        Manage conversation history to stay within context window limits.
+
+        Two-layer strategy:
+        1. Observation Masking: Replace non-recent tool results with reference markers
+        2. Emergency drop: If still over budget, drop oldest turns entirely
+        """
+        from orchestrator.llm.token_utils import estimate_message_tokens, get_context_window
+
+        ctx_config = self.config.get("context_management", {})
+        if not ctx_config.get("enabled", True):
+            return conversation_history
+
+        model = getattr(self.llm_client, "model", "")
+        context_window = get_context_window(model)
+        budget = int(context_window * ctx_config.get("budget_ratio", 0.75))
+        preserve_recent = ctx_config.get("preserve_recent_turns", 4)
+
+        # Step 1: Observation Masking
+        # Keep the last N turns' tool results intact, mask older ones
+        # A "turn" = 2 messages (assistant + user), so preserve_recent * 2 messages
+        mask_boundary = len(conversation_history) - (preserve_recent * 2)
+
+        if mask_boundary > 0:
+            for i, msg in enumerate(conversation_history[:mask_boundary]):
+                if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+                    for block in msg["content"]:
+                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                            content = block.get("content", "")
+                            if isinstance(content, str) and len(content) > 200:
+                                tool_name = self._extract_tool_name(conversation_history, i)
+                                original_len = len(content)
+                                block["content"] = (
+                                    f"[Observation masked: {tool_name} returned {original_len} chars. "
+                                    f"Content omitted to save context. "
+                                    f"Re-run the tool if you need this information again.]"
+                                )
+
+        # Step 2: Estimate total context and emergency drop if needed
+        system_tokens = estimate_message_tokens(
+            [{"role": "system", "content": self._build_system_prompt(context)},
+             {"role": "user", "content": context.get("task_description", "")}]
+        )
+        tools_tokens = len(str(context.get("tools", []))) // 4
+        history_tokens = estimate_message_tokens(conversation_history)
+        total = system_tokens + tools_tokens + history_tokens
+
+        if total > budget and len(conversation_history) > preserve_recent * 2:
+            preserved = conversation_history[-(preserve_recent * 2):]
+            droppable = conversation_history[:-(preserve_recent * 2)]
+
+            while droppable and total > budget:
+                if len(droppable) >= 2:
+                    dropped = droppable[:2]
+                    droppable = droppable[2:]
+                    total -= estimate_message_tokens(dropped)
+                else:
+                    break
+
+            summary_msg = {
+                "role": "user",
+                "content": (
+                    f"[Context management: {len(conversation_history) - len(droppable) - len(preserved)} "
+                    f"earlier messages were dropped to stay within context limits. "
+                    f"Use tools to re-read any information you need.]"
+                ),
+            }
+            conversation_history = [summary_msg] + droppable + preserved
+            logger.info(
+                f"Context emergency drop: {history_tokens} → "
+                f"{estimate_message_tokens(conversation_history)} estimated tokens"
+            )
+
+        return conversation_history
+
+    def _extract_tool_name(self, conversation_history: list[dict], user_msg_index: int) -> str:
+        """Extract tool name from the assistant message preceding a user tool_result message."""
+        if user_msg_index > 0:
+            prev = conversation_history[user_msg_index - 1]
+            if prev.get("role") == "assistant" and isinstance(prev.get("content"), list):
+                for block in prev["content"]:
+                    if hasattr(block, "type") and block.type == "tool_use":
+                        return block.name
+        return "tool"
 
     def _prepare_messages(
         self, task: Task, context: dict[str, Any], conversation_history: list[dict]

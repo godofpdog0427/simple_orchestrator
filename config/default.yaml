@@ -125,6 +125,12 @@ subagents:
     max_iterations: 15  # Default max reasoning iterations
     allowed_tools: ["bash", "file_read", "file_write"]  # Default allowed tools
 
+# Context Window Management (Phase 9)
+context_management:
+  enabled: true
+  budget_ratio: 0.75          # Use 75% of context window (leave room for output)
+  preserve_recent_turns: 4     # Keep last N turns' tool results intact, mask older
+
 cache:
   enabled: true  # Enable caching system (Phase 5A)
   ttl: 3600  # Default TTL in seconds (1 hour)
