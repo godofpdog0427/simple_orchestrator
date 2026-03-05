@@ -1010,6 +1010,113 @@ class Orchestrator:
 
         return True
 
+    async def _interruptible_llm_stream(self, stream_generator, on_chunk, on_response):
+        """
+        Consume an LLM stream generator with interrupt support.
+
+        Races each chunk against the interrupt event so a stuck LLM call
+        can be cancelled by Ctrl+C instead of blocking forever.
+
+        Args:
+            stream_generator: Async generator from llm_client.chat_stream()
+            on_chunk: Callback(chunk) for each StreamChunk
+            on_response: Callback(response) for the final LLMResponse
+
+        Returns:
+            True if completed normally, False if interrupted
+        """
+        stream_iter = stream_generator.__aiter__()
+
+        while True:
+            # Create a task for the next chunk
+            next_item = asyncio.ensure_future(stream_iter.__anext__())
+
+            # If we have an interrupt controller, race against it
+            if self.interrupt_controller:
+                interrupt_wait = asyncio.ensure_future(
+                    self.interrupt_controller.wait_for_interrupt(timeout=None)
+                )
+                done, pending = await asyncio.wait(
+                    {next_item, interrupt_wait},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for p in pending:
+                    p.cancel()
+                    try:
+                        await p
+                    except (asyncio.CancelledError, StopAsyncIteration):
+                        pass
+
+                if interrupt_wait in done:
+                    logger.info("LLM stream interrupted by user")
+                    return False
+            else:
+                done = {next_item}
+                try:
+                    await next_item
+                except StopAsyncIteration:
+                    return True
+
+            # Get the result
+            for task_done in done:
+                if task_done is next_item:
+                    try:
+                        item = task_done.result()
+                    except StopAsyncIteration:
+                        return True
+                    except Exception:
+                        raise
+
+                    from orchestrator.llm.client import StreamChunk, LLMResponse as LLMResp
+                    if isinstance(item, StreamChunk):
+                        on_chunk(item)
+                    elif isinstance(item, LLMResp):
+                        on_response(item)
+                        return True
+
+        return True
+
+    async def _interruptible_await(self, coro):
+        """
+        Await a coroutine with interrupt support.
+
+        Races the coroutine against the interrupt event so a stuck LLM call
+        can be cancelled by Ctrl+C.
+
+        Args:
+            coro: Coroutine to await
+
+        Returns:
+            Result of the coroutine
+
+        Raises:
+            asyncio.CancelledError: If interrupted
+        """
+        task = asyncio.ensure_future(coro)
+
+        if self.interrupt_controller:
+            interrupt_wait = asyncio.ensure_future(
+                self.interrupt_controller.wait_for_interrupt(timeout=None)
+            )
+            done, pending = await asyncio.wait(
+                {task, interrupt_wait},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for p in pending:
+                p.cancel()
+                try:
+                    await p
+                except (asyncio.CancelledError, StopAsyncIteration):
+                    pass
+
+            if interrupt_wait in done:
+                logger.info("LLM call interrupted by user")
+                raise asyncio.CancelledError("Interrupted by user")
+
+            return task.result()
+        else:
+            return await task
+
     async def _handle_interrupt(self, task: Task, partial_result: Optional[str] = None) -> None:
         """
         Handle interrupt cleanup and state preservation.
@@ -1190,41 +1297,40 @@ class Orchestrator:
                     # Start warning task
                     warning_task = asyncio.create_task(_streaming_warning_task())
 
+                    # === INTERRUPT-AWARE STREAMING (Phase 7 fix) ===
+                    # Use _interruptible_llm_stream to race each chunk against
+                    # the interrupt event, so Ctrl+C can cancel a stuck LLM call.
+                    def _on_chunk(item):
+                        nonlocal reasoning_text, first_token_received, last_chunk_time
+                        last_chunk_time = asyncio.get_event_loop().time()
+
+                        if not first_token_received:
+                            first_token_received = True
+                            if hasattr(self.display_manager, 'stop_activity'):
+                                self.display_manager.stop_activity()
+                            if hasattr(self.display_manager, 'start_thinking_stream'):
+                                self.display_manager.start_thinking_stream()
+
+                        reasoning_text += item.text
+                        if hasattr(self.display_manager, 'update_thinking_stream'):
+                            self.display_manager.update_thinking_stream(item.text)
+
+                    def _on_response(item):
+                        nonlocal response, last_chunk_time
+                        last_chunk_time = asyncio.get_event_loop().time()
+                        response = item
+
                     try:
-                        async for item in stream_generator:
-                            # Update last chunk time for warning task
-                            last_chunk_time = asyncio.get_event_loop().time()
-
-                            # === INTERRUPT CHECK POINT 2: During streaming ===
-                            if self._check_interrupt():
-                                logger.info("Interrupt during streaming")
-                                # Stop activity indicator if still running
-                                if not first_token_received and hasattr(self.display_manager, 'stop_activity'):
-                                    self.display_manager.stop_activity()
-                                await self._handle_interrupt(task, partial_result=reasoning_text if reasoning_text else None)
-                                return f"[Execution interrupted]\n\nPartial response:\n{reasoning_text}" if reasoning_text else "[Execution interrupted by user]"
-
-                            if isinstance(item, StreamChunk):
-                                # Phase 7B: On first token, stop spinner and show thinking header
-                                if not first_token_received:
-                                    first_token_received = True
-                                    # Stop the "Thinking..." spinner
-                                    if hasattr(self.display_manager, 'stop_activity'):
-                                        self.display_manager.stop_activity()
-                                    # Show "● Thinking" header and prepare for streaming
-                                    if hasattr(self.display_manager, 'start_thinking_stream'):
-                                        self.display_manager.start_thinking_stream()
-
-                                # Text chunk - add to display
-                                reasoning_text += item.text
-                                if hasattr(self.display_manager, 'update_thinking_stream'):
-                                    self.display_manager.update_thinking_stream(item.text)
-                            elif isinstance(item, LLMResp):
-                                # Final response
-                                response = item
+                        completed = await self._interruptible_llm_stream(
+                            stream_generator, _on_chunk, _on_response
+                        )
+                        if not completed:
+                            # Interrupted during streaming
+                            if not first_token_received and hasattr(self.display_manager, 'stop_activity'):
+                                self.display_manager.stop_activity()
+                            await self._handle_interrupt(task, partial_result=reasoning_text if reasoning_text else None)
+                            return f"[Execution interrupted]\n\nPartial response:\n{reasoning_text}" if reasoning_text else "[Execution interrupted by user]"
                     except Exception:
-                        # Ensure activity indicator is stopped on error to prevent
-                        # Rich Live from blocking stdout and hanging the CLI
                         if not first_token_received and hasattr(self.display_manager, 'stop_activity'):
                             self.display_manager.stop_activity()
                         raise
@@ -1249,8 +1355,14 @@ class Orchestrator:
                         raise RuntimeError("Streaming API did not yield final LLMResponse")
 
                 else:
-                    # Fallback to non-streaming
-                    response = await self.llm_client.chat(messages, tools=tools if tools else None)
+                    # Fallback to non-streaming (interrupt-aware)
+                    try:
+                        response = await self._interruptible_await(
+                            self.llm_client.chat(messages, tools=tools if tools else None)
+                        )
+                    except asyncio.CancelledError:
+                        await self._handle_interrupt(task, partial_result=None)
+                        return "[Execution interrupted by user]"
 
                     # Extract reasoning text from response
                     reasoning_text = ""

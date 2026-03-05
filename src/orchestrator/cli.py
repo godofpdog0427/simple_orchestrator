@@ -107,6 +107,13 @@ async def _run_interactive(config: dict) -> None:
         )
         console.print("\n[yellow]⚠️  Interrupt requested, finishing current operation...[/yellow]")
 
+        # On hard interrupt escalation, restore default SIGINT handler
+        # so the next Ctrl+C will raise KeyboardInterrupt and kill the process.
+        # This prevents being stuck when an LLM call blocks the event loop.
+        if interrupt_controller.interrupt_type == InterruptType.HARD:
+            console.print("[red]⚠️  Hard interrupt — next Ctrl+C will force quit.[/red]")
+            signal.signal(signal.SIGINT, original_sigint_handler)
+
     signal.signal(signal.SIGINT, sigint_handler)
 
     # NEW (Phase 6E): Create welcome screen builder
