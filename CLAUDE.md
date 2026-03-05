@@ -103,7 +103,7 @@ git stash pop
 - **Workspace State**: Conversation memory enables continuity across tasks (Phase 5B)
 - **Human-in-the-Loop (HITL)**: Approve critical operations before execution
 - **Mode System**: Ask/Plan/Execute modes with session management (Phase 6)
-- **Graceful Interrupts**: Ctrl+C handling, activity indicators, timeout warnings (Phase 7)
+- **Graceful Interrupts**: Ctrl+C handling, interruptible LLM calls, activity indicators, timeout warnings (Phase 7/7.1)
 - **Session Memory**: Named sessions with resume/list/delete support (Phase 8)
 - **Context Window Protection**: Idempotency-aware Observation Masking + hybrid LLM summarization (Phase 9/9.1)
 
@@ -249,7 +249,7 @@ This orchestrator is built on proven AI agent design patterns:
 - **Workspace Manager**: Persists conversation state (Phase 5B)
 - **Mode Manager**: Ask/Plan/Execute mode switching (Phase 6)
 - **Session Registry**: Named session management with resume (Phase 8)
-- **Interrupt Handler**: Graceful Ctrl+C and timeout handling (Phase 7)
+- **Interrupt Handler**: Graceful Ctrl+C with interruptible LLM calls, hard-interrupt escalation (Phase 7/7.1)
 - **Context Protector**: Idempotency-aware Observation Masking + hybrid LLM summarization (Phase 9/9.1)
 
 **Detailed Architecture**: See [`docs/development/architecture.md`](docs/development/architecture.md)
@@ -348,6 +348,7 @@ This orchestrator is built on proven AI agent design patterns:
 - Azure Anthropic API provider support
 - Structured error handling in TaskDecomposeTool
 - CLI hang fix on LLM connection errors
+- Interruptible LLM calls: Ctrl+C now cancels stuck API calls via `asyncio.wait` racing against interrupt event; hard-interrupt escalation restores default SIGINT handler
 
 **Full Implementation Details**: See [`docs/development/implementation-status.md`](docs/development/implementation-status.md)
 
