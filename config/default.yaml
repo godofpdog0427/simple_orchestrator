@@ -130,6 +130,8 @@ context_management:
   enabled: true
   budget_ratio: 0.75          # Use 75% of context window (leave room for output)
   preserve_recent_turns: 4     # Keep last N turns' tool results intact, mask older
+  non_idempotent_truncation: 500   # Chars to keep for non-idempotent tool results
+  summarize_dropped_turns: true    # LLM-summarize before emergency drop
 
 cache:
   enabled: true  # Enable caching system (Phase 5A)

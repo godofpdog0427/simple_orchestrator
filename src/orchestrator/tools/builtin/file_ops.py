@@ -34,6 +34,7 @@ class FileReadTool(Tool):
             ],
             requires_approval=config.get("requires_approval", False),
             category="file",
+            idempotent=True,
         )
 
     async def execute(self, path: str) -> ToolResult:

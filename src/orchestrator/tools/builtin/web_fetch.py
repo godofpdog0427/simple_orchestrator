@@ -68,6 +68,7 @@ class WebFetchTool(Tool):
             requires_approval=config.get("requires_approval", False),
             timeout_seconds=self.timeout_seconds,
             category="web",
+            idempotent=True,
         )
 
     async def execute(

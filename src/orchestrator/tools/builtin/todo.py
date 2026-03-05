@@ -75,6 +75,7 @@ class TodoListTool(Tool):
         requires_approval=False,
         timeout_seconds=10,
         category="task_management",
+        idempotent=True,
     )
 
     def __init__(self):

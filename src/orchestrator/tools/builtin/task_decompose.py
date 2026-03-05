@@ -79,6 +79,7 @@ class TaskDecomposeTool(Tool):
             ),
         ],
         requires_approval=False,
+        idempotent=True,
     )
 
     def __init__(self):

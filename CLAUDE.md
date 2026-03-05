@@ -2,8 +2,8 @@
 
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Last Updated**: 2026-01-18
-**Current Phase**: Phase 5B Complete → Phase 6 Planning
+**Last Updated**: 2026-03-05
+**Current Phase**: Phase 9.1 Complete
 
 ---
 
@@ -102,6 +102,10 @@ git stash pop
 - **Skill-based Instructions**: Prompt-based skills (SKILL.md files) guide LLM behavior
 - **Workspace State**: Conversation memory enables continuity across tasks (Phase 5B)
 - **Human-in-the-Loop (HITL)**: Approve critical operations before execution
+- **Mode System**: Ask/Plan/Execute modes with session management (Phase 6)
+- **Graceful Interrupts**: Ctrl+C handling, activity indicators, timeout warnings (Phase 7)
+- **Session Memory**: Named sessions with resume/list/delete support (Phase 8)
+- **Context Window Protection**: Idempotency-aware Observation Masking + hybrid LLM summarization (Phase 9/9.1)
 
 ### Technology Stack
 
@@ -122,7 +126,8 @@ simple_orchestrator/
 │   ├── hooks/                 # Hook engine
 │   ├── skills/                # Skill registry
 │   ├── subagents/             # Subagent manager
-│   ├── workspace/             # Workspace state (Phase 5B)
+│   ├── workspace/             # Workspace state & session memory
+│   ├── modes/                 # Mode system (Ask/Plan/Execute)
 │   └── cli/                   # CLI interface
 ├── tests/                     # Unit and integration tests
 ├── config/                    # Configuration files
@@ -151,6 +156,12 @@ cp .env.example .env
 # Start orchestrator in interactive mode
 orchestrator chat
 
+# Start with specific mode (ask/plan/execute)
+orchestrator chat --mode ask
+
+# Resume a named session
+orchestrator chat --resume --session my-session
+
 # Test mode (isolated workspace)
 orchestrator test
 
@@ -159,6 +170,12 @@ orchestrator start --config config/custom.yaml
 
 # Add a task
 orchestrator task add "Analyze code and suggest improvements"
+
+# Session management
+orchestrator session list
+orchestrator session show <session-id>
+orchestrator session rename <session-id> "new name"
+orchestrator session delete <session-id>
 ```
 
 ### Development
@@ -230,6 +247,10 @@ This orchestrator is built on proven AI agent design patterns:
 - **Skill Registry**: Auto-discovers and injects SKILL.md files
 - **Subagent Manager**: Spawns isolated child agents
 - **Workspace Manager**: Persists conversation state (Phase 5B)
+- **Mode Manager**: Ask/Plan/Execute mode switching (Phase 6)
+- **Session Registry**: Named session management with resume (Phase 8)
+- **Interrupt Handler**: Graceful Ctrl+C and timeout handling (Phase 7)
+- **Context Protector**: Idempotency-aware Observation Masking + hybrid LLM summarization (Phase 9/9.1)
 
 **Detailed Architecture**: See [`docs/development/architecture.md`](docs/development/architecture.md)
 
@@ -316,10 +337,17 @@ This orchestrator is built on proven AI agent design patterns:
 - ✅ **Phase 4B**: Subagent System (Resource-constrained delegation)
 - ✅ **Phase 5A**: Tool Result Caching (TTL-based, LRU eviction)
 - ✅ **Phase 5B**: Workspace State & Memory (Conversation continuity, task summaries)
+- ✅ **Phase 6**: Mode System (Ask/Plan/Execute modes, session-level approval whitelist, seal mascot welcome screen)
+- ✅ **Phase 7**: UX Improvements (Graceful interrupt handling, activity indicators, HITL spinner, interruptible streaming, timeout warnings)
+- ✅ **Phase 8**: Session Memory (Named sessions, resume/list/show/delete/rename, session registry)
+- ✅ **Phase 9**: Context Window Protection (Observation Masking per arXiv 2508.21433, emergency turn drop)
+- ✅ **Phase 9.1**: Context Management Optimization (idempotency-aware masking, hybrid LLM summarization for emergency drop, `idempotent` field on ToolDefinition)
 
-### Next Phase
+### Other Enhancements
 
-**Phase 6**: Mode System (Ask/Plan/Execute modes with session management)
+- Azure Anthropic API provider support
+- Structured error handling in TaskDecomposeTool
+- CLI hang fix on LLM connection errors
 
 **Full Implementation Details**: See [`docs/development/implementation-status.md`](docs/development/implementation-status.md)
 
@@ -353,11 +381,13 @@ Configuration is loaded from `config/default.yaml` with optional overrides in `c
 ### Key Configuration Sections
 
 ```yaml
+mode: "plan"  # ask, plan, execute (Phase 6)
+
 llm:
-  provider: anthropic
+  provider: anthropic  # or azure_anthropic
   anthropic:
     model: claude-sonnet-4-20250514
-    max_tokens: 8192
+    max_tokens: 16384
     temperature: 0.7
 
 workspace:  # Phase 5B
@@ -365,15 +395,18 @@ workspace:  # Phase 5B
   workspace_dir: ".orchestrator/workspace_state"
   max_task_summaries: 10
 
+context_management:  # Phase 9/9.1
+  enabled: true
+  budget_ratio: 0.75
+  preserve_recent_turns: 4
+  non_idempotent_truncation: 500   # Chars to keep for non-idempotent tool results
+  summarize_dropped_turns: true    # LLM-summarize before emergency drop
+
 tools:
   bash:
     enabled: true
     requires_approval: true
     blocked_commands: ["rm -rf /", "mkfs", ...]
-
-  file_read:
-    enabled: true
-    max_file_size_mb: 10
 
 hooks:
   enabled: true
@@ -433,14 +466,20 @@ black src/
 mypy src/
 ```
 
-### Manage Workspace
+### Manage Sessions & Workspaces
 
 ```bash
-# List all workspace sessions
-orchestrator workspace list
+# List all sessions
+orchestrator session list
 
-# Delete specific workspace
-orchestrator workspace delete <session-id>
+# Show session details
+orchestrator session show <session-id>
+
+# Rename a session
+orchestrator session rename <session-id> "new name"
+
+# Delete a session
+orchestrator session delete <session-id>
 
 # Purge old workspaces
 orchestrator workspace purge --older-than 30

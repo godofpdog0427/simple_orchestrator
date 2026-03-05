@@ -1108,7 +1108,7 @@ class Orchestrator:
 
                 # Observation Masking: mask old tool results to stay within context window
                 if conversation_history:
-                    conversation_history = self._manage_context_window(
+                    conversation_history = await self._manage_context_window(
                         conversation_history, context
                     )
 
@@ -1343,15 +1343,16 @@ class Orchestrator:
             if use_live_display and hasattr(self.display_manager, 'stop_live'):
                 self.display_manager.stop_live()
 
-    def _manage_context_window(
+    async def _manage_context_window(
         self, conversation_history: list[dict], context: dict[str, Any]
     ) -> list[dict]:
         """
         Manage conversation history to stay within context window limits.
 
         Two-layer strategy:
-        1. Observation Masking: Replace non-recent tool results with reference markers
-        2. Emergency drop: If still over budget, drop oldest turns entirely
+        1. Observation Masking: Idempotency-aware — idempotent tools get re-run markers,
+           non-idempotent tools get truncated to preserve irrecoverable information
+        2. Emergency drop: If still over budget, LLM-summarize dropped turns before discarding
         """
         from orchestrator.llm.token_utils import estimate_message_tokens, get_context_window
 
@@ -1363,8 +1364,9 @@ class Orchestrator:
         context_window = get_context_window(model)
         budget = int(context_window * ctx_config.get("budget_ratio", 0.75))
         preserve_recent = ctx_config.get("preserve_recent_turns", 4)
+        non_idempotent_truncation = ctx_config.get("non_idempotent_truncation", 500)
 
-        # Step 1: Observation Masking
+        # Step 1: Idempotency-aware Observation Masking
         # Keep the last N turns' tool results intact, mask older ones
         # A "turn" = 2 messages (assistant + user), so preserve_recent * 2 messages
         mask_boundary = len(conversation_history) - (preserve_recent * 2)
@@ -1378,11 +1380,19 @@ class Orchestrator:
                             if isinstance(content, str) and len(content) > 200:
                                 tool_name = self._extract_tool_name(conversation_history, i)
                                 original_len = len(content)
-                                block["content"] = (
-                                    f"[Observation masked: {tool_name} returned {original_len} chars. "
-                                    f"Content omitted to save context. "
-                                    f"Re-run the tool if you need this information again.]"
-                                )
+                                if self._is_tool_idempotent(tool_name):
+                                    block["content"] = (
+                                        f"[Observation masked: {tool_name} returned {original_len} chars. "
+                                        f"Content omitted to save context. "
+                                        f"Re-run the tool if you need this information again.]"
+                                    )
+                                else:
+                                    truncated = content[:non_idempotent_truncation]
+                                    block["content"] = (
+                                        f"{truncated}\n\n"
+                                        f"[...truncated from {original_len} chars. "
+                                        f"This was a {tool_name} result that cannot be re-run.]"
+                                    )
 
         # Step 2: Estimate total context and emergency drop if needed
         system_tokens = estimate_message_tokens(
@@ -1397,22 +1407,43 @@ class Orchestrator:
             preserved = conversation_history[-(preserve_recent * 2):]
             droppable = conversation_history[:-(preserve_recent * 2)]
 
+            dropped_turns = []
             while droppable and total > budget:
                 if len(droppable) >= 2:
                     dropped = droppable[:2]
+                    dropped_turns.extend(dropped)
                     droppable = droppable[2:]
                     total -= estimate_message_tokens(dropped)
                 else:
                     break
 
-            summary_msg = {
-                "role": "user",
-                "content": (
-                    f"[Context management: {len(conversation_history) - len(droppable) - len(preserved)} "
+            num_dropped = len(conversation_history) - len(droppable) - len(preserved)
+
+            # Try LLM summarization of dropped turns
+            summary_text = None
+            if (
+                dropped_turns
+                and self.summarizer
+                and ctx_config.get("summarize_dropped_turns", True)
+            ):
+                try:
+                    summary_text = await self.summarizer.summarize_turns(dropped_turns)
+                except Exception as e:
+                    logger.warning(f"Failed to summarize dropped turns: {e}")
+
+            if summary_text:
+                content = (
+                    f"[Context management: {num_dropped} messages summarized to stay within context limits.]\n\n"
+                    f"Summary of dropped context:\n{summary_text}"
+                )
+            else:
+                content = (
+                    f"[Context management: {num_dropped} "
                     f"earlier messages were dropped to stay within context limits. "
                     f"Use tools to re-read any information you need.]"
-                ),
-            }
+                )
+
+            summary_msg = {"role": "user", "content": content}
             conversation_history = [summary_msg] + droppable + preserved
             logger.info(
                 f"Context emergency drop: {history_tokens} → "
@@ -1420,6 +1451,14 @@ class Orchestrator:
             )
 
         return conversation_history
+
+    def _is_tool_idempotent(self, tool_name: str) -> bool:
+        """Check if a tool is idempotent (safe to re-run for same result)."""
+        if self.tool_registry:
+            tool = self.tool_registry.get(tool_name)
+            if tool:
+                return tool.definition.idempotent
+        return False
 
     def _extract_tool_name(self, conversation_history: list[dict], user_msg_index: int) -> str:
         """Extract tool name from the assistant message preceding a user tool_result message."""

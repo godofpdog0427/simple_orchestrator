@@ -29,6 +29,7 @@ class ToolDefinition(BaseModel):
     requires_approval: bool = False
     timeout_seconds: int = 60
     category: Optional[str] = None
+    idempotent: bool = False
 
 
 @dataclass
@@ -102,6 +103,7 @@ def tool(
     requires_approval: bool = False,
     timeout_seconds: int = 60,
     category: Optional[str] = None,
+    idempotent: bool = False,
 ) -> Callable[[Callable[..., Any]], Tool]:
     """
     Decorator to convert a function into a Tool.
@@ -141,6 +143,7 @@ def tool(
                 requires_approval=requires_approval,
                 timeout_seconds=timeout_seconds,
                 category=category,
+                idempotent=idempotent,
             )
 
             async def execute(self, **kwargs: Any) -> ToolResult:
